@@ -159,7 +159,6 @@ export function renderGatewayHtml(opts: {
       pointer-events:none;
     }
 
-    /* tighter top like screenshot */
     .wrap{
       max-width: 1100px;
       margin: 0 auto;
@@ -239,7 +238,6 @@ export function renderGatewayHtml(opts: {
       max-width: 62ch;
     }
 
-    /* chips row (renamed from .meta to avoid conflicts) */
     .chips{
       position:relative;
       z-index:1;
@@ -285,10 +283,9 @@ export function renderGatewayHtml(opts: {
       font-family: var(--mono);
     }
 
-    /* ---------------- Right status card (pixel-ish like screenshot) ---------------- */
     .statusCard{
-      flex: 0 1 360px;         /* a bit wider like screenshot */
-      padding: 18px 18px 16px; /* tighter */
+      flex: 0 1 360px;
+      padding: 18px 18px 16px;
       min-width: 300px;
       display:flex;
       flex-direction: column;
@@ -314,13 +311,11 @@ export function renderGatewayHtml(opts: {
       gap: 12px;
     }
 
-    /* make labels align + feel like screenshot */
     .statusRow .label{
       font-size: 12px;
       opacity: .85;
     }
 
-    /* buttons in status card a bit more compact */
     .statusCard .btn{
       padding: 7px 10px;
       border-radius: 12px;
@@ -345,6 +340,11 @@ export function renderGatewayHtml(opts: {
     .btn:hover{ transform: translateY(-1px); background: rgba(255,255,255,.085); }
     .btn:active{ transform: translateY(0px); }
 
+    .btn.primary{
+      border-color: rgba(120,170,255,.35);
+      background: rgba(120,170,255,.10);
+    }
+
     .kbd{
       font-family: var(--mono);
       padding: 3px 7px;
@@ -355,7 +355,6 @@ export function renderGatewayHtml(opts: {
       font-size: 11px;
     }
 
-    /* ---------------- Table ---------------- */
     .tableCard{
       margin-top: 18px;
       padding: 18px;
@@ -375,11 +374,6 @@ export function renderGatewayHtml(opts: {
       margin:0;
       font-size: 16px;
       letter-spacing: -0.01em;
-    }
-
-    .hint{
-      color: var(--muted);
-      font-size: 12px;
     }
 
     .method{
@@ -413,7 +407,6 @@ export function renderGatewayHtml(opts: {
       flex-wrap: wrap;
     }
 
-    /* ---------- Accordion ---------- */
     .accWrap{
       border: 1px solid rgba(255,255,255,.10);
       border-radius: 16px;
@@ -530,7 +523,6 @@ export function renderGatewayHtml(opts: {
       white-space: pre;
     }
 
-    /* JSON syntax colors */
     .j-key{ color: rgba(0,210,255,.95); }
     .j-str{ color: rgba(49,233,129,.92); }
     .j-num{ color: rgba(255,205,0,.92); }
@@ -538,7 +530,6 @@ export function renderGatewayHtml(opts: {
     .j-null{ color: rgba(255,71,108,.92); }
     .j-punc{ color: rgba(255,255,255,.55); }
 
-    /* ---------- Modal ---------- */
     .modalOverlay{
       position:fixed;
       inset:0;
@@ -645,7 +636,6 @@ export function renderGatewayHtml(opts: {
       .statusCard{ min-width: 280px; }
     }
 
-    /* ---------------- User card (absolute top-right) ---------------- */
     .userWrap{
       position:absolute;
       top:18px;
@@ -739,6 +729,48 @@ export function renderGatewayHtml(opts: {
     .logoutBtn:hover{
       background:rgba(255,255,255,.1);
     }
+
+    /* ----------- Auth token box (NEW) ----------- */
+    .authBox{
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.16);
+      border-radius: 16px;
+      padding: 12px;
+      display:flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .authRow{
+      display:flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .authInput{
+      flex: 1 1 220px;
+      min-width: 220px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.06);
+      color: rgba(255,255,255,.92);
+      padding: 10px 10px;
+      border-radius: 12px;
+      outline: none;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .authInput:focus{
+      border-color: rgba(120,170,255,.45);
+      box-shadow: 0 0 0 4px rgba(120,170,255,.12);
+    }
+
+    .authHint{
+      width:100%;
+      font-size: 11.5px;
+      color: rgba(255,255,255,.62);
+      line-height: 1.35;
+    }
   </style>
 </head>
 <body>
@@ -794,6 +826,28 @@ export function renderGatewayHtml(opts: {
           <button class="btn" id="btnRefresh" type="button">
             Refresh status <span class="kbd">R</span>
           </button>
+        </div>
+
+        <!-- NEW: Auth token input -->
+        <div class="authBox">
+          <div class="label" style="font-weight:800; letter-spacing:-.01em;">Authorization token</div>
+
+          <div class="authRow">
+            <input
+              id="authTokenInput"
+              class="authInput"
+              placeholder="Paste Bearer token"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="btn primary" id="saveTokenBtn" type="button">Save</button>
+            <button class="btn" id="clearTokenBtn" type="button">Clear</button>
+          </div>
+
+          <div class="authHint">
+            Used for endpoints that require <span class="kbd">Authorization: Bearer &lt;token&gt;</span>.
+            Saved to your browser <span class="kbd">localStorage</span> for this gateway page.
+          </div>
         </div>
 
         <div class="statusRow">
@@ -873,6 +927,75 @@ export function renderGatewayHtml(opts: {
   </div>
 
   <script>
+    // ---------- Token storage (NEW) ----------
+    const TOKEN_KEY = "zipo_gateway_auth_token";
+
+    function normalizeToken(raw) {
+      if (!raw) return "";
+      const t = String(raw).trim();
+      if (!t) return "";
+      // allow pasting "Bearer xxxxx"
+      if (t.toLowerCase().startsWith("bearer ")) return t.slice(7).trim();
+      return t;
+    }
+
+    function getSavedToken() {
+      try {
+        return normalizeToken(localStorage.getItem(TOKEN_KEY) || "");
+      } catch {
+        return "";
+      }
+    }
+
+    function saveToken(raw) {
+      const t = normalizeToken(raw);
+      try {
+        if (!t) localStorage.removeItem(TOKEN_KEY);
+        else localStorage.setItem(TOKEN_KEY, t);
+      } catch {}
+      return t;
+    }
+
+    function clearToken() {
+      try { localStorage.removeItem(TOKEN_KEY); } catch {}
+      const el = document.getElementById("authTokenInput");
+      if (el) el.value = "";
+    }
+
+    // init token input with saved value
+    (function initTokenUI() {
+      const input = document.getElementById("authTokenInput");
+      const saveBtn = document.getElementById("saveTokenBtn");
+      const clearBtn = document.getElementById("clearTokenBtn");
+
+      const saved = getSavedToken();
+      if (input && saved) input.value = saved;
+
+      if (saveBtn) {
+        saveBtn.addEventListener("click", () => {
+          const t = saveToken(input ? input.value : "");
+          if (input) input.value = t;
+        });
+      }
+
+      if (clearBtn) {
+        clearBtn.addEventListener("click", () => clearToken());
+      }
+
+      // allow Ctrl/Cmd+Enter to save
+      if (input) {
+        input.addEventListener("keydown", (e) => {
+          const isEnter = e.key === "Enter";
+          const isMod = e.ctrlKey || e.metaKey;
+          if (isEnter && isMod) {
+            e.preventDefault();
+            const t = saveToken(input.value);
+            input.value = t;
+          }
+        });
+      }
+    })();
+
     // ---------- Date format: "14 JAN 2025 01:36:43 PM" ----------
     function formatLocalPretty(iso) {
       const d = new Date(iso);
@@ -906,7 +1029,6 @@ export function renderGatewayHtml(opts: {
       const json = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
       const esc = escapeHtml(json);
 
-      // token approach
       return esc.replace(
         /("(?:\\\\u[a-fA-F0-9]{4}|\\\\[^u]|[^\\\\"])*"\\s*:)|("(?:\\\\u[a-fA-F0-9]{4}|\\\\[^u]|[^\\\\"])*")|\\b(true|false)\\b|\\b(null)\\b|-?\\b\\d+(?:\\.\\d+)?(?:[eE][+\\-]?\\d+)?\\b|[{}\\[\\],]/g,
         (match, key, str, bool, nul) => {
@@ -915,7 +1037,6 @@ export function renderGatewayHtml(opts: {
           if (bool) return '<span class="j-bool">' + match + '</span>';
           if (nul) return '<span class="j-null">' + match + '</span>';
           if (/^[{}\\[\\],]$/.test(match)) return '<span class="j-punc">' + match + '</span>';
-          // number
           return '<span class="j-num">' + match + '</span>';
         }
       );
@@ -943,9 +1064,16 @@ export function renderGatewayHtml(opts: {
     overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
     window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
-    // ---------- Fetch helpers ----------
+    // ---------- Fetch helpers (UPDATED to include Bearer token) ----------
     async function fetchJson(path) {
-      const res = await fetch(path, { cache: "no-store", headers: { accept: "application/json" } });
+      const token = getSavedToken();
+      const headers = { accept: "application/json" };
+
+      if (token) {
+        headers["Authorization"] = "Bearer " + token;
+      }
+
+      const res = await fetch(path, { cache: "no-store", headers });
       const data = await res.json();
       return { ok: res.ok, status: res.status, data };
     }
@@ -1035,14 +1163,12 @@ export function renderGatewayHtml(opts: {
     document.getElementById("btnRefresh").addEventListener("click", refreshStatus);
     window.addEventListener("keydown", (e) => { if (e.key.toLowerCase() === "r") refreshStatus(); });
 
-    // format server-rendered "Now" immediately
     const nowEl = document.getElementById("nowText");
     if (nowEl) {
       const iso = nowEl.getAttribute("data-iso");
       if (iso) nowEl.textContent = formatLocalPretty(iso);
     }
 
-    // auto refresh on load + every 10s
     refreshStatus();
     setInterval(refreshStatus, 10000);
 
@@ -1101,7 +1227,6 @@ export function renderGatewayHtml(opts: {
         head.setAttribute("aria-expanded", "true");
         body.hidden = false;
 
-        // only fetch on expand if endpoint does NOT require :id
         if (!needsId && !fetchedOnExpand) {
           fetchedOnExpand = true;
           try {
@@ -1117,7 +1242,6 @@ export function renderGatewayHtml(opts: {
       const openModalBtn = item.querySelector(".openModalBtn");
       if (openModalBtn) {
         openModalBtn.addEventListener("click", async () => {
-          // build final path
           let path = pathTpl;
 
           if (needsId) {
