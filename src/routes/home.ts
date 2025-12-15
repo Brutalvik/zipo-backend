@@ -49,6 +49,11 @@ const ENDPOINTS: ApiEndpoint[] = [
     path: "/api/cars/featured",
     description: "Featured cars (home section)",
   },
+  {
+    method: "PATCH",
+    path: "/api/users/mode",
+    description: "Switch active user mode (guest ↔ host)",
+  },
 ];
 
 const homeRoutes: FastifyPluginAsync = async (app) => {

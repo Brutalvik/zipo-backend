@@ -2,10 +2,13 @@ import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 import authPlugin from "./plugins/auth.js";
 import dbPlugin from "./plugins/db.js";
+
+//Routes
 import carsRoutes from "./routes/cars.js";
 import homeRoutes from "./routes/home.js";
 import loginRoutes from "./routes/login.js";
 import authSessionRoutes from "./routes/authSession.js";
+import userModeRoutes from "./routes/userMode.js";
 
 // Application builder
 export function buildApp(): FastifyInstance {
@@ -22,6 +25,7 @@ export function buildApp(): FastifyInstance {
   app.register(authSessionRoutes);
   app.register(homeRoutes);
   app.register(carsRoutes);
+  app.register(userModeRoutes);
 
   return app;
 }
