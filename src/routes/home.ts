@@ -50,9 +50,14 @@ const ENDPOINTS: ApiEndpoint[] = [
     description: "Featured cars (home section)",
   },
   {
+    method: "GET",
+    path: "/api/users/mode",
+    description: "Get current user mode (guest/host)",
+  },
+  {
     method: "PATCH",
     path: "/api/users/mode",
-    description: "Switch active user mode (guest ↔ host)",
+    description: "Switch user mode (guest/host)",
   },
 ];
 
