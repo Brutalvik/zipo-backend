@@ -133,6 +133,7 @@ export function renderGatewayHtml(opts: {
     }
 
     * { box-sizing: border-box; }
+
     body{
       margin:0;
       font-family: var(--sans);
@@ -158,10 +159,11 @@ export function renderGatewayHtml(opts: {
       pointer-events:none;
     }
 
+    /* tighter top like screenshot */
     .wrap{
       max-width: 1100px;
       margin: 0 auto;
-      padding: 42px 18px 60px;
+      padding: 28px 18px 60px;
     }
 
     .hero{
@@ -182,8 +184,8 @@ export function renderGatewayHtml(opts: {
     }
 
     .brand{
-      flex: 1 1 520px;
-      padding: 26px 26px 22px;
+      flex: 1 1 620px;
+      padding: 20px 22px 18px;
       position: relative;
       overflow:hidden;
     }
@@ -222,7 +224,7 @@ export function renderGatewayHtml(opts: {
 
     h1{
       margin: 0;
-      font-size: 34px;
+      font-size: 30px;
       line-height: 1.05;
       letter-spacing: -0.02em;
     }
@@ -230,32 +232,35 @@ export function renderGatewayHtml(opts: {
     .subtitle{
       position:relative;
       z-index:1;
-      margin-top: 10px;
+      margin-top: 6px;
       color: var(--muted);
-      font-size: 14px;
-      line-height: 1.6;
-      max-width: 68ch;
+      font-size: 13px;
+      line-height: 1.55;
+      max-width: 62ch;
     }
 
-    .meta{
+    /* chips row (renamed from .meta to avoid conflicts) */
+    .chips{
       position:relative;
       z-index:1;
-      margin-top: 16px;
+      margin-top: 12px;
       display:flex;
       gap: 10px;
       flex-wrap: wrap;
+      align-items: center;
     }
 
     .chip{
       border: 1px solid var(--stroke2);
       background: rgba(255,255,255,.06);
-      padding: 8px 10px;
+      padding: 7px 10px;
       border-radius: 999px;
-      font-size: 12px;
+      font-size: 11.5px;
       color: rgba(255,255,255,.82);
       display:flex;
       gap: 8px;
       align-items:center;
+      white-space: nowrap;
     }
 
     .dot{
@@ -264,44 +269,93 @@ export function renderGatewayHtml(opts: {
       border-radius: 50%;
       box-shadow: 0 0 0 4px rgba(255,255,255,.04);
       border: 1px solid rgba(255,255,255,.20);
+      flex: 0 0 auto;
     }
     .dot.ok{ background: #31e981; box-shadow: 0 0 22px rgba(49,233,129,.55), 0 0 0 4px rgba(49,233,129,.10); }
     .dot.bad{ background: #ff476c; box-shadow: 0 0 22px rgba(255,71,108,.52), 0 0 0 4px rgba(255,71,108,.10); }
 
-    .statusCard{
-      flex: 0 1 320px;
-      padding: 20px;
-      min-width: 280px;
-      display:flex;
-      flex-direction: column;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .statusRow{
-      display:flex;
-      align-items:center;
-      justify-content: space-between;
-      gap: 12px;
-    }
     .label{
       color: var(--muted);
       font-size: 12px;
     }
+
     .value{
       font-size: 13px;
       color: rgba(255,255,255,.86);
       font-family: var(--mono);
     }
+
+    /* ---------------- Right status card (pixel-ish like screenshot) ---------------- */
+    .statusCard{
+      flex: 0 1 360px;         /* a bit wider like screenshot */
+      padding: 18px 18px 16px; /* tighter */
+      min-width: 300px;
+      display:flex;
+      flex-direction: column;
+      gap: 14px;
+      position: relative;
+    }
+
     .big{
-      font-size: 18px;
-      font-weight: 700;
+      font-size: 16px;
+      font-weight: 800;
       letter-spacing: -0.01em;
       display:flex;
       align-items:center;
       gap: 10px;
+      margin: 0;
+      padding-bottom: 4px;
     }
 
+    .statusRow{
+      display:grid;
+      grid-template-columns: 1fr auto;
+      align-items:center;
+      gap: 12px;
+    }
+
+    /* make labels align + feel like screenshot */
+    .statusRow .label{
+      font-size: 12px;
+      opacity: .85;
+    }
+
+    /* buttons in status card a bit more compact */
+    .statusCard .btn{
+      padding: 7px 10px;
+      border-radius: 12px;
+    }
+
+    .btn{
+      cursor:pointer;
+      user-select:none;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.06);
+      padding: 8px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      color: rgba(255,255,255,.88);
+      display:inline-flex;
+      gap: 8px;
+      align-items:center;
+      text-decoration:none;
+      transition: transform .12s ease, background .12s ease;
+      white-space: nowrap;
+    }
+    .btn:hover{ transform: translateY(-1px); background: rgba(255,255,255,.085); }
+    .btn:active{ transform: translateY(0px); }
+
+    .kbd{
+      font-family: var(--mono);
+      padding: 3px 7px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.20);
+      color: rgba(255,255,255,.82);
+      font-size: 11px;
+    }
+
+    /* ---------------- Table ---------------- */
     .tableCard{
       margin-top: 18px;
       padding: 18px;
@@ -357,33 +411,6 @@ export function renderGatewayHtml(opts: {
       justify-content: space-between;
       gap: 10px;
       flex-wrap: wrap;
-    }
-
-    .btn{
-      cursor:pointer;
-      user-select:none;
-      border: 1px solid rgba(255,255,255,.16);
-      background: rgba(255,255,255,.06);
-      padding: 8px 10px;
-      border-radius: 12px;
-      font-size: 12px;
-      color: rgba(255,255,255,.88);
-      display:inline-flex;
-      gap: 8px;
-      align-items:center;
-      text-decoration:none;
-      transition: transform .12s ease, background .12s ease;
-    }
-    .btn:hover{ transform: translateY(-1px); background: rgba(255,255,255,.085); }
-    .btn:active{ transform: translateY(0px); }
-    .kbd{
-      font-family: var(--mono);
-      padding: 3px 7px;
-      border-radius: 8px;
-      border: 1px solid rgba(255,255,255,.14);
-      background: rgba(0,0,0,.20);
-      color: rgba(255,255,255,.82);
-      font-size: 11px;
     }
 
     /* ---------- Accordion ---------- */
@@ -614,20 +641,22 @@ export function renderGatewayHtml(opts: {
 
     @media (max-width: 640px){
       h1{ font-size: 28px; }
-      .brand{ padding: 20px; }
+      .brand{ padding: 18px; }
+      .statusCard{ min-width: 280px; }
     }
 
+    /* ---------------- User card (absolute top-right) ---------------- */
     .userWrap{
       position:absolute;
-      top:22px;
-      right:22px;
+      top:18px;
+      right:18px;
       z-index:5;
     }
-    
+
     .user{
       display:flex;
       align-items:center;
-      gap:10px;
+      gap:12px;
       padding:10px 12px;
       border-radius:16px;
       border:1px solid rgba(255,255,255,.14);
@@ -635,7 +664,7 @@ export function renderGatewayHtml(opts: {
       backdrop-filter:blur(10px);
       -webkit-backdrop-filter:blur(10px);
     }
-    
+
     .avatar{
       width:36px;
       height:36px;
@@ -643,65 +672,39 @@ export function renderGatewayHtml(opts: {
       object-fit:cover;
       border:1px solid rgba(255,255,255,.22);
     }
-    
-    .avatar.fallback{
-      display:grid;
-      place-items:center;
-      background:rgba(255,255,255,.14);
-    }
-    
-    .avatar svg{
-      width:18px;
-      height:18px;
-      fill:white;
-      opacity:.85;
-    }
-    
-    .user{
-      display:flex;
-      align-items:center;
-      gap:12px;
-    }
-    
-    .avatar{
-      width:36px;
-      height:36px;
-      border-radius:50%;
-      object-fit:cover;
-    }
-    
+
     .avatar.fallback{
       display:grid;
       place-items:center;
       background:rgba(255,255,255,.12);
+      border:1px solid rgba(255,255,255,.18);
     }
-    
+
     .avatar svg{
       width:18px;
       fill:white;
       opacity:.8;
     }
-    
-    .meta{
+
+    .userMeta{
       display:flex;
       flex-direction:column;
       line-height:1.2;
     }
-    
-    .meta .name{
+
+    .userMeta .name{
       font-size:13px;
       font-weight:600;
       display:flex;
       align-items:center;
       gap:6px;
     }
-    
-    .meta .email{
+
+    .userMeta .email{
       font-size:11px;
       opacity:.6;
     }
-    
-    /* ---------- Badges ---------- */
+
     .badge{
       font-size:9px;
       padding:3px 6px;
@@ -709,20 +712,19 @@ export function renderGatewayHtml(opts: {
       letter-spacing:.08em;
       font-weight:700;
     }
-    
+
     .badge.admin{
       background:linear-gradient(135deg,#a855f7,#6366f1);
       color:white;
       box-shadow:0 0 10px rgba(168,85,247,.5);
     }
-    
+
     .badge.user{
       background:rgba(255,255,255,.12);
       color:rgba(255,255,255,.85);
       border:1px solid rgba(255,255,255,.18);
     }
-    
-    /* ---------- Logout ---------- */
+
     .logoutBtn{
       margin-left:8px;
       padding:6px 10px;
@@ -732,11 +734,11 @@ export function renderGatewayHtml(opts: {
       background:rgba(255,255,255,.06);
       color:white;
       text-decoration:none;
+      white-space: nowrap;
     }
     .logoutBtn:hover{
       background:rgba(255,255,255,.1);
     }
-    
   </style>
 </head>
 <body>
@@ -754,9 +756,9 @@ export function renderGatewayHtml(opts: {
           </div>
         </div>
 
-        <div class="meta">
+        <div class="chips">
           <div class="chip">
-            <span class="dot ${statusClass}"></span>
+            <span class="dot ${statusClass}" id="dbDotInline"></span>
             <span><strong>DB:</strong> <span id="dbStatusText">${statusText}</span></span>
           </div>
           <div class="chip">
@@ -799,35 +801,36 @@ export function renderGatewayHtml(opts: {
           <div class="value">Use <span class="kbd">curl</span> or Postman</div>
         </div>
       </aside>
+
       ${
         user
           ? `
       <div class="userWrap">
-      <div class="user">
-      ${
-        user?.picture
-          ? `<img src="${user.picture}" class="avatar"/>`
-          : `<div class="avatar fallback">
-               <svg viewBox="0 0 24 24">
-                 <path d="M12 12c2.7 0 4.9-2.2 4.9-4.9S14.7 2.2 12 2.2 7.1 4.4 7.1 7.1 9.3 12 12 12zm0 2.4c-3.3 0-9.8 1.7-9.8 5v2.4h19.6v-2.4c0-3.3-6.5-5-9.8-5z"/>
-               </svg>
-             </div>`
-      }
-    
-      <div class="meta">
-        <div class="name">
-          ${user?.name ?? "User"}
+        <div class="user">
           ${
-            user?.role === "admin"
-              ? `<span class="badge admin">ADMIN</span>`
-              : `<span class="badge user">USER</span>`
+            user?.picture
+              ? `<img src="${user.picture}" class="avatar"/>`
+              : `<div class="avatar fallback">
+                   <svg viewBox="0 0 24 24">
+                     <path d="M12 12c2.7 0 4.9-2.2 4.9-4.9S14.7 2.2 12 2.2 7.1 4.4 7.1 7.1 9.3 12 12 12zm0 2.4c-3.3 0-9.8 1.7-9.8 5v2.4h19.6v-2.4c0-3.3-6.5-5-9.8-5z"/>
+                   </svg>
+                 </div>`
           }
+
+          <div class="userMeta">
+            <div class="name">
+              ${user?.name ?? "User"}
+              ${
+                user?.role === "admin"
+                  ? `<span class="badge admin">ADMIN</span>`
+                  : `<span class="badge user">USER</span>`
+              }
+            </div>
+            <div class="email">${user?.email ?? ""}</div>
+          </div>
+
+          <a href="/logout" class="logoutBtn">Logout</a>
         </div>
-        <div class="email">${user?.email ?? ""}</div>
-      </div>
-    
-      <a href="/logout" class="logoutBtn">Logout</a>
-    </div>
       </div>
       `
           : ""
@@ -964,7 +967,6 @@ export function renderGatewayHtml(opts: {
       const dot = ok ? "#31e981" : "#ff476c";
       const status = ok ? "Connected" : "Disconnected";
 
-      // Same "health.html.ts" style but as modal card content
       return \`
         <div class="modalCard">
           <h1 class="modalH"><span style="width:10px;height:10px;border-radius:999px;background:\${dot};box-shadow:0 0 18px \${dot};display:inline-block"></span>
@@ -996,16 +998,19 @@ export function renderGatewayHtml(opts: {
         const latency = typeof data.db?.latencyMs === "number" ? data.db.latencyMs + " ms" : "—";
 
         const dot = document.getElementById("dbDot");
+        const dotInline = document.getElementById("dbDotInline");
         const txt = document.getElementById("dbStatusText");
         const big = document.getElementById("dbBigText");
         const lat = document.getElementById("dbLatency");
 
         if (ok) {
           dot.classList.remove("bad"); dot.classList.add("ok");
+          if (dotInline) { dotInline.classList.remove("bad"); dotInline.classList.add("ok"); }
           txt.textContent = "Connected";
           big.textContent = "Database Connected";
         } else {
           dot.classList.remove("ok"); dot.classList.add("bad");
+          if (dotInline) { dotInline.classList.remove("ok"); dotInline.classList.add("bad"); }
           txt.textContent = "Disconnected";
           big.textContent = "Database Disconnected";
         }
@@ -1015,10 +1020,12 @@ export function renderGatewayHtml(opts: {
         if (nowEl && data.now) nowEl.textContent = formatLocalPretty(data.now);
       } catch (e) {
         const dot = document.getElementById("dbDot");
+        const dotInline = document.getElementById("dbDotInline");
         const txt = document.getElementById("dbStatusText");
         const big = document.getElementById("dbBigText");
         const lat = document.getElementById("dbLatency");
         dot.classList.remove("ok"); dot.classList.add("bad");
+        if (dotInline) { dotInline.classList.remove("ok"); dotInline.classList.add("bad"); }
         txt.textContent = "Disconnected";
         big.textContent = "Database Disconnected";
         lat.textContent = "—";
