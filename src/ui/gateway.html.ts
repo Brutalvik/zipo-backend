@@ -619,9 +619,9 @@ export function renderGatewayHtml(opts: {
         <div class="title">
           <div class="logo">Z</div>
           <div>
-            <h1>ZIPO API Gateway</h1>
+            <h1>Zipo API Gateway</h1>
             <div class="subtitle">
-              Your local API hub for Zipo. Endpoints below are live and ready for your mobile app.
+              API hub for Zipo. Endpoints below are live and ready.
               DB status updates automatically.
             </div>
           </div>
@@ -677,7 +677,7 @@ export function renderGatewayHtml(opts: {
     <section class="card tableCard">
       <div class="tableHead">
         <h2>Available Endpoints</h2>
-        <div class="hint">Accordion • Fetch on expand • Beautiful JSON in modal</div>
+        <div class="hint"></div>
       </div>
 
       <div class="accWrap">
