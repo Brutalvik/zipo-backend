@@ -9,6 +9,7 @@ import authSessionRoutes from "./routes/authSession.js";
 import homeRoutes from "./routes/home.js";
 import carsRoutes from "./routes/cars.js";
 import userModeRoutes from "./routes/userMode.js";
+import userRoutes from "./routes/user.js";
 
 // Application builder
 export function buildApp(): FastifyInstance {
@@ -22,10 +23,11 @@ export function buildApp(): FastifyInstance {
 
   // Routes
   app.register(loginRoutes);
-  app.register(authSessionRoutes);
+  app.register(authSessionRoutes, { prefix: "/api" });
   app.register(homeRoutes);
-  app.register(carsRoutes);
+  app.register(carsRoutes, { prefix: "/api" });
   app.register(userModeRoutes, { prefix: "/api" });
+  app.register(userRoutes, { prefix: "/api" });
 
   return app;
 }

@@ -69,7 +69,7 @@ export default (async function carsRoutes(app) {
   /**
    * GET /api/cars
    */
-  app.get("/api/cars", async (req, reply) => {
+  app.get("/cars", async (req, reply) => {
     const q = req.query as CarsQuery;
 
     const where: string[] = [];
@@ -162,9 +162,9 @@ export default (async function carsRoutes(app) {
   });
 
   /**
-   * GET /api/cars/:id
+   * GET /cars/:id
    */
-  app.get("/api/cars/:id", async (req, reply) => {
+  app.get("/cars/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
 
     const sql = `
@@ -191,10 +191,10 @@ export default (async function carsRoutes(app) {
   });
 
   /**
-   * GET /api/cars/filters?country=CA
+   * GET /cars/filters?country=CA
    * (country param is optional; you can keep it or remove it since DB is per-country)
    */
-  app.get("/api/cars/filters", async (req, reply) => {
+  app.get("/cars/filters", async (req, reply) => {
     const q = (req.query ?? {}) as Partial<{ country: string }>;
 
     const params: any[] = [];
@@ -255,9 +255,9 @@ export default (async function carsRoutes(app) {
   });
 
   /**
-   * GET /api/cars/search/suggest?q=&country=
+   * GET /cars/search/suggest?q=&country=
    */
-  app.get("/api/cars/search/suggest", async (req, reply) => {
+  app.get("/cars/search/suggest", async (req, reply) => {
     const q = (req.query ?? {}) as Partial<{
       q: string;
       country: string;
@@ -310,9 +310,9 @@ export default (async function carsRoutes(app) {
   });
 
   /**
-   * GET /api/cars/:id/similar
+   * GET /cars/:id/similar
    */
-  app.get("/api/cars/:id/similar", async (req, reply) => {
+  app.get("/cars/:id/similar", async (req, reply) => {
     const { id } = req.params as { id: string };
     const limit = clamp(Number((req.query as any)?.limit ?? 8) || 8, 1, 20);
 
@@ -366,10 +366,10 @@ export default (async function carsRoutes(app) {
   });
 
   /**
-   * GET /api/cars/:id/availability?start=YYYY-MM-DD&end=YYYY-MM-DD
+   * GET /cars/:id/availability?start=YYYY-MM-DD&end=YYYY-MM-DD
    * STUB until bookings table exists
    */
-  app.get("/api/cars/:id/availability", async (req, reply) => {
+  app.get("/cars/:id/availability", async (req, reply) => {
     const { id } = req.params as { id: string };
     const q = (req.query ?? {}) as Partial<{ start: string; end: string }>;
 
@@ -409,9 +409,9 @@ export default (async function carsRoutes(app) {
 
   /**
    * OPTIONAL (nice for home screen):
-   * GET /api/cars/featured?limit=10
+   * GET /cars/featured?limit=10
    */
-  app.get("/api/cars/featured", async (req, reply) => {
+  app.get("/cars/featured", async (req, reply) => {
     const limit = clamp(Number((req.query as any)?.limit ?? 10) || 10, 1, 20);
 
     const sql = `
