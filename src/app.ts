@@ -1,13 +1,23 @@
 import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
+import authPlugin from "./plugins/auth.js";
 import dbPlugin from "./plugins/db.js";
 import carsRoutes from "./routes/cars.js";
 import homeRoutes from "./routes/home.js";
+import loginRoutes from "./routes/login.js";
 
+// Application builder
 export function buildApp(): FastifyInstance {
   const app = Fastify({ logger: true, trustProxy: true });
 
+  // Auth
+  app.register(authPlugin);
+
+  // Infra
   app.register(dbPlugin);
+
+  // Routes
+  app.register(loginRoutes);
   app.register(homeRoutes);
   app.register(carsRoutes);
 

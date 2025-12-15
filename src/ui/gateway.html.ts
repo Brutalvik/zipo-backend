@@ -30,8 +30,14 @@ export function renderGatewayHtml(opts: {
   version: string;
   endpoints: ApiEndpoint[];
   nowIso: string;
+  user?: {
+    name?: string;
+    email?: string;
+    picture?: string;
+    role?: string;
+  };
 }) {
-  const { dbConnected, dbLatencyMs, version, endpoints, nowIso } = opts;
+  const { dbConnected, dbLatencyMs, version, endpoints, nowIso, user } = opts;
 
   const statusText = dbConnected ? "Connected" : "Disconnected";
   const statusClass = dbConnected ? "ok" : "bad";
@@ -610,6 +616,127 @@ export function renderGatewayHtml(opts: {
       h1{ font-size: 28px; }
       .brand{ padding: 20px; }
     }
+
+    .userWrap{
+      position:absolute;
+      top:22px;
+      right:22px;
+      z-index:5;
+    }
+    
+    .user{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:10px 12px;
+      border-radius:16px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.08);
+      backdrop-filter:blur(10px);
+      -webkit-backdrop-filter:blur(10px);
+    }
+    
+    .avatar{
+      width:36px;
+      height:36px;
+      border-radius:50%;
+      object-fit:cover;
+      border:1px solid rgba(255,255,255,.22);
+    }
+    
+    .avatar.fallback{
+      display:grid;
+      place-items:center;
+      background:rgba(255,255,255,.14);
+    }
+    
+    .avatar svg{
+      width:18px;
+      height:18px;
+      fill:white;
+      opacity:.85;
+    }
+    
+    .user{
+      display:flex;
+      align-items:center;
+      gap:12px;
+    }
+    
+    .avatar{
+      width:36px;
+      height:36px;
+      border-radius:50%;
+      object-fit:cover;
+    }
+    
+    .avatar.fallback{
+      display:grid;
+      place-items:center;
+      background:rgba(255,255,255,.12);
+    }
+    
+    .avatar svg{
+      width:18px;
+      fill:white;
+      opacity:.8;
+    }
+    
+    .meta{
+      display:flex;
+      flex-direction:column;
+      line-height:1.2;
+    }
+    
+    .meta .name{
+      font-size:13px;
+      font-weight:600;
+      display:flex;
+      align-items:center;
+      gap:6px;
+    }
+    
+    .meta .email{
+      font-size:11px;
+      opacity:.6;
+    }
+    
+    /* ---------- Badges ---------- */
+    .badge{
+      font-size:9px;
+      padding:3px 6px;
+      border-radius:999px;
+      letter-spacing:.08em;
+      font-weight:700;
+    }
+    
+    .badge.admin{
+      background:linear-gradient(135deg,#a855f7,#6366f1);
+      color:white;
+      box-shadow:0 0 10px rgba(168,85,247,.5);
+    }
+    
+    .badge.user{
+      background:rgba(255,255,255,.12);
+      color:rgba(255,255,255,.85);
+      border:1px solid rgba(255,255,255,.18);
+    }
+    
+    /* ---------- Logout ---------- */
+    .logoutBtn{
+      margin-left:8px;
+      padding:6px 10px;
+      font-size:12px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(255,255,255,.06);
+      color:white;
+      text-decoration:none;
+    }
+    .logoutBtn:hover{
+      background:rgba(255,255,255,.1);
+    }
+    
   </style>
 </head>
 <body>
@@ -672,6 +799,39 @@ export function renderGatewayHtml(opts: {
           <div class="value">Use <span class="kbd">curl</span> or Postman</div>
         </div>
       </aside>
+      ${
+        user
+          ? `
+      <div class="userWrap">
+      <div class="user">
+      ${
+        user?.picture
+          ? `<img src="${user.picture}" class="avatar"/>`
+          : `<div class="avatar fallback">
+               <svg viewBox="0 0 24 24">
+                 <path d="M12 12c2.7 0 4.9-2.2 4.9-4.9S14.7 2.2 12 2.2 7.1 4.4 7.1 7.1 9.3 12 12 12zm0 2.4c-3.3 0-9.8 1.7-9.8 5v2.4h19.6v-2.4c0-3.3-6.5-5-9.8-5z"/>
+               </svg>
+             </div>`
+      }
+    
+      <div class="meta">
+        <div class="name">
+          ${user?.name ?? "User"}
+          ${
+            user?.role === "admin"
+              ? `<span class="badge admin">ADMIN</span>`
+              : `<span class="badge user">USER</span>`
+          }
+        </div>
+        <div class="email">${user?.email ?? ""}</div>
+      </div>
+    
+      <a href="/logout" class="logoutBtn">Logout</a>
+    </div>
+      </div>
+      `
+          : ""
+      }
     </div>
 
     <section class="card tableCard">

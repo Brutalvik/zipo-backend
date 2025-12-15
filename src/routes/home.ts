@@ -1,6 +1,20 @@
 // src/routes/home.ts
+import "dotenv/config";
 import type { FastifyPluginAsync } from "fastify";
 import { renderGatewayHtml, type ApiEndpoint } from "../ui/gateway.html.js";
+import { renderAccessDeniedHtml } from "../ui/accessDenied.html.js";
+
+function parseEmailSet(value?: string) {
+  return new Set(
+    (value ?? "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+const ALLOWED_EMAILS = parseEmailSet(process.env.AUTH_ALLOWED_EMAILS);
+const ADMIN_EMAILS = parseEmailSet(process.env.AUTH_ADMIN_EMAILS);
 
 const ENDPOINTS: ApiEndpoint[] = [
   {
@@ -38,6 +52,7 @@ const ENDPOINTS: ApiEndpoint[] = [
 ];
 
 const homeRoutes: FastifyPluginAsync = async (app) => {
+  // JSON health (used by UI)
   app.get("/api/health", async (_req, reply) => {
     const start = Date.now();
 
@@ -64,7 +79,8 @@ const homeRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  app.get("/", async (_req, reply) => {
+  // Protect the Gateway UI
+  app.get("/", { preHandler: app.requireUiAuth }, async (req, reply) => {
     const start = Date.now();
     let connected = false;
     let latencyMs: number | null = null;
@@ -78,15 +94,46 @@ const homeRoutes: FastifyPluginAsync = async (app) => {
       latencyMs = null;
     }
 
+    const user = (req as any).session?.user;
+
+    // Safety check (should not happen because of requireUiAuth)
+    if (!user?.email) {
+      return reply.redirect("/login");
+    }
+
+    const email = String(user.email).toLowerCase();
+
+    // ❌ NOT ALLOWED → ACCESS DENIED
+    if (!ALLOWED_EMAILS.has(email)) {
+      return reply
+        .code(403)
+        .header("content-type", "text/html; charset=utf-8")
+        .header("cache-control", "no-store")
+        .send(
+          renderAccessDeniedHtml({
+            email,
+            name: user.name,
+            picture: user.picture,
+          })
+        );
+    }
+
+    // ✅ ALLOWED → GATEWAY
     const html = renderGatewayHtml({
       dbConnected: connected,
       dbLatencyMs: latencyMs,
       version: process.env.APP_VERSION ?? "dev",
       endpoints: ENDPOINTS,
       nowIso: new Date().toISOString(),
+      user: {
+        name: user.name ?? "",
+        email,
+        picture: user.picture ?? "",
+        role: ADMIN_EMAILS.has(email) ? "admin" : "user",
+      },
     });
 
-    reply
+    return reply
       .header("content-type", "text/html; charset=utf-8")
       .header("cache-control", "no-store")
       .send(html);
