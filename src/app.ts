@@ -5,6 +5,7 @@ import dbPlugin from "./plugins/db.js";
 import carsRoutes from "./routes/cars.js";
 import homeRoutes from "./routes/home.js";
 import loginRoutes from "./routes/login.js";
+import authSessionRoutes from "./routes/authSession.js";
 
 // Application builder
 export function buildApp(): FastifyInstance {
@@ -18,6 +19,7 @@ export function buildApp(): FastifyInstance {
 
   // Routes
   app.register(loginRoutes);
+  app.register(authSessionRoutes);
   app.register(homeRoutes);
   app.register(carsRoutes);
 
@@ -26,9 +28,11 @@ export function buildApp(): FastifyInstance {
 
 // Local dev: start server explicitly (Windows + tsx friendly)
 if (process.env.RUN_LOCAL === "true") {
+  console.log("Starting fastify server ...");
   const server = buildApp();
+  console.log("Bulding necessary functions...");
   const port = parseInt(process.env.PORT || "8080", 10);
-
+  console.log("Assigning port 8080...");
   server
     .listen({ port, host: "0.0.0.0" })
     .then((address) => console.log(`Fastify server listening at ${address}`))
