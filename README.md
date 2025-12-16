@@ -104,7 +104,7 @@ Plain textANTLR4BashCC#CSSCoffeeScriptCMakeDartDjangoDockerEJSErlangGitGoGraphQL
 
 After successful authentication:
 
-Plain textANTLR4BashCC#CSSCoffeeScriptCMakeDartDjangoDockerEJSErlangGitGoGraphQLGroovyHTMLJavaJavaScriptJSONJSXKotlinLaTeXLessLuaMakefileMarkdownMATLABMarkupObjective-CPerlPHPPowerShell.propertiesProtocol BuffersPythonRRubySass (Sass)Sass (Scss)SchemeSQLShellSwiftSVGTSXTypeScriptWebAssemblyYAMLXML`req.authUser = {    uid: string;    email?: string;    emailVerified?: boolean;    phoneNumber?: string;    name?: string;    picture?: string;    claims: Record;  }`
+`req.authUser = {    uid: string;    email?: string;    emailVerified?: boolean;    phoneNumber?: string;    name?: string;    picture?: string;    claims: Record;  }`
 
 - All identity comes from req.authUser.uid
 - No route ever accepts a userId from the client
