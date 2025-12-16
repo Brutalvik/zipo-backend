@@ -15,49 +15,120 @@ function parseEmailSet(value?: string) {
 
 const ALLOWED_EMAILS = parseEmailSet(process.env.AUTH_ALLOWED_EMAILS);
 const ADMIN_EMAILS = parseEmailSet(process.env.AUTH_ADMIN_EMAILS);
-
 const ENDPOINTS: ApiEndpoint[] = [
+  // -------------------------
+  // System
+  // -------------------------
   {
     method: "GET",
     path: "/api/health",
-    description: "Health check (DB + uptime)",
+    description: "Health check (DB connectivity + uptime)",
   },
+
+  // -------------------------
+  // Cars / Marketplace
+  // -------------------------
   {
     method: "GET",
     path: "/api/cars",
     description: "List cars (filters + pagination)",
   },
-  { method: "GET", path: "/api/cars/:id", description: "Car details" },
+  {
+    method: "GET",
+    path: "/api/cars/:id",
+    description: "Car details",
+  },
   {
     method: "GET",
     path: "/api/cars/filters",
-    description: "Filter options (UI helper)",
+    description: "Car filter options (UI helper)",
   },
   {
     method: "GET",
     path: "/api/cars/search/suggest",
-    description: "Typeahead suggestions",
+    description: "Search typeahead suggestions",
   },
-  { method: "GET", path: "/api/cars/:id/similar", description: "Similar cars" },
+  {
+    method: "GET",
+    path: "/api/cars/:id/similar",
+    description: "Similar cars",
+  },
   {
     method: "GET",
     path: "/api/cars/:id/availability",
-    description: "Availability (stub for now)",
+    description: "Car availability (stub)",
   },
   {
     method: "GET",
     path: "/api/cars/featured",
-    description: "Featured cars (home section)",
+    description: "Featured cars (home screen)",
+  },
+
+  // -------------------------
+  // Home
+  // -------------------------
+  {
+    method: "GET",
+    path: "/api/home",
+    description: "Home screen content (featured sections, promos)",
+  },
+
+  // -------------------------
+  // Auth / Session
+  // -------------------------
+  {
+    method: "GET",
+    path: "/api/auth/session",
+    description: "Validate auth session (Firebase token → backend)",
+  },
+
+  // -------------------------
+  // User / Profile
+  // -------------------------
+  {
+    method: "GET",
+    path: "/api/users/me",
+    description: "Get current user profile",
+  },
+  {
+    method: "PATCH",
+    path: "/api/users/profile",
+    description:
+      "Update user profile (name, DOB, photo; immutability enforced)",
+  },
+  {
+    method: "PATCH",
+    path: "/api/users/phone",
+    description: "Update phone number (pending verification model)",
+  },
+  {
+    method: "PATCH",
+    path: "/api/users/email/sync",
+    description: "Sync verified email from Firebase to backend",
   },
   {
     method: "GET",
     path: "/api/users/mode",
-    description: "Get current user mode (guest/host)",
+    description: "Get current user mode (Guest / Host)",
   },
   {
     method: "PATCH",
     path: "/api/users/mode",
-    description: "Switch user mode (guest/host)",
+    description: "Switch user mode (Guest / Host)",
+  },
+
+  // -------------------------
+  // Bookings (partial)
+  // -------------------------
+  {
+    method: "POST",
+    path: "/api/bookings",
+    description: "Create booking (DOB required, 18+ enforced)",
+  },
+  {
+    method: "GET",
+    path: "/api/bookings/me",
+    description: "Get current user's bookings",
   },
 ];
 
