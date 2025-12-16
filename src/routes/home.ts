@@ -15,6 +15,25 @@ function parseEmailSet(value?: string) {
 
 const ALLOWED_EMAILS = parseEmailSet(process.env.AUTH_ALLOWED_EMAILS);
 const ADMIN_EMAILS = parseEmailSet(process.env.AUTH_ADMIN_EMAILS);
+
+/**
+ * Access policy:
+ * - If AUTH_ALLOWED_EMAILS is provided: only those emails can access Gateway UI.
+ * - If AUTH_ALLOWED_EMAILS is empty: only admins can access (safe default).
+ * - If both are empty: deny all (safe default).
+ */
+function canAccessGateway(email: string) {
+  const e = email.toLowerCase();
+  if (ALLOWED_EMAILS.size > 0) return ALLOWED_EMAILS.has(e);
+  if (ADMIN_EMAILS.size > 0) return ADMIN_EMAILS.has(e);
+  return false;
+}
+
+/**
+ * IMPORTANT:
+ * This list is for the Gateway UI display only.
+ * Keep it aligned with what is ACTUALLY implemented in the backend.
+ */
 const ENDPOINTS: ApiEndpoint[] = [
   // -------------------------
   // System
@@ -26,7 +45,16 @@ const ENDPOINTS: ApiEndpoint[] = [
   },
 
   // -------------------------
-  // Cars / Marketplace
+  // Auth / Session
+  // -------------------------
+  {
+    method: "POST",
+    path: "/api/auth/session",
+    description: "Sync Firebase user to backend DB (Bearer token required)",
+  },
+
+  // -------------------------
+  // Cars / Marketplace (public read)
   // -------------------------
   {
     method: "GET",
@@ -35,18 +63,43 @@ const ENDPOINTS: ApiEndpoint[] = [
   },
   {
     method: "GET",
-    path: "/api/cars/:id",
-    description: "Car details",
+    path: "/api/cars/map",
+    description: "Map viewport search (minLat/maxLat/minLng/maxLng)",
   },
   {
     method: "GET",
     path: "/api/cars/filters",
-    description: "Car filter options (UI helper)",
+    description: "Filter dropdown options (distinct values)",
+  },
+  {
+    method: "GET",
+    path: "/api/cars/search",
+    description: "Search cars (filters + pagination; q encouraged)",
   },
   {
     method: "GET",
     path: "/api/cars/search/suggest",
-    description: "Search typeahead suggestions",
+    description: "Typeahead suggestions (q required)",
+  },
+  {
+    method: "GET",
+    path: "/api/cars/featured",
+    description: "Featured cars (home screen sections)",
+  },
+  {
+    method: "GET",
+    path: "/api/cars/popular",
+    description: "Popular cars",
+  },
+  {
+    method: "GET",
+    path: "/api/cars/stats",
+    description: "Car aggregates (debug / dashboards)",
+  },
+  {
+    method: "GET",
+    path: "/api/cars/:id",
+    description: "Car details",
   },
   {
     method: "GET",
@@ -56,34 +109,35 @@ const ENDPOINTS: ApiEndpoint[] = [
   {
     method: "GET",
     path: "/api/cars/:id/availability",
-    description: "Car availability (stub)",
-  },
-  {
-    method: "GET",
-    path: "/api/cars/featured",
-    description: "Featured cars (home screen)",
+    description: "Availability (stub until bookings exist)",
   },
 
   // -------------------------
-  // Home
+  // Cars / Marketplace (protected write)
   // -------------------------
   {
-    method: "GET",
-    path: "/api/home",
-    description: "Home screen content (featured sections, promos)",
+    method: "POST",
+    path: "/api/cars",
+    description: "Create car (auth required)",
+  },
+  {
+    method: "PATCH",
+    path: "/api/cars/:id",
+    description: "Update car (auth required)",
+  },
+  {
+    method: "PATCH",
+    path: "/api/cars/:id/publish",
+    description: "Publish/unpublish status (auth required)",
+  },
+  {
+    method: "DELETE",
+    path: "/api/cars/:id",
+    description: "Soft delete car (auth required)",
   },
 
   // -------------------------
-  // Auth / Session
-  // -------------------------
-  {
-    method: "GET",
-    path: "/api/auth/session",
-    description: "Validate auth session (Firebase token → backend)",
-  },
-
-  // -------------------------
-  // User / Profile
+  // User / Profile (auth required)
   // -------------------------
   {
     method: "GET",
@@ -92,48 +146,28 @@ const ENDPOINTS: ApiEndpoint[] = [
   },
   {
     method: "PATCH",
-    path: "/api/users/profile",
+    path: "/api/users/me",
     description:
-      "Update user profile (name, DOB, photo; immutability enforced)",
-  },
-  {
-    method: "PATCH",
-    path: "/api/users/phone",
-    description: "Update phone number (pending verification model)",
+      "Update current user profile (name/DOB/email/phone pending rules)",
   },
   {
     method: "PATCH",
     path: "/api/users/email/sync",
-    description: "Sync verified email from Firebase to backend",
-  },
-  {
-    method: "GET",
-    path: "/api/users/mode",
-    description: "Get current user mode (Guest / Host)",
+    description: "Sync email + email_verified from Firebase token",
   },
   {
     method: "PATCH",
-    path: "/api/users/mode",
-    description: "Switch user mode (Guest / Host)",
+    path: "/api/users/phone/sync",
+    description: "Sync VERIFIED phone from Firebase token",
   },
 
-  // -------------------------
-  // Bookings (partial)
-  // -------------------------
-  {
-    method: "POST",
-    path: "/api/bookings",
-    description: "Create booking (DOB required, 18+ enforced)",
-  },
-  {
-    method: "GET",
-    path: "/api/bookings/me",
-    description: "Get current user's bookings",
-  },
+  // NOTE:
+  // If you want /api/users/mode or /api/home etc, only add them here
+  // AFTER the routes actually exist in code.
 ];
 
 const homeRoutes: FastifyPluginAsync = async (app) => {
-  // JSON health (used by UI)
+  // JSON health (used by UI + debugging)
   app.get("/api/health", async (_req, reply) => {
     const start = Date.now();
 
@@ -145,10 +179,10 @@ const homeRoutes: FastifyPluginAsync = async (app) => {
       await app.db.query("SELECT 1");
       connected = true;
       latencyMs = Date.now() - start;
-    } catch (e: any) {
+    } catch (e: unknown) {
       connected = false;
       latencyMs = null;
-      error = e?.message ?? "Unknown DB error";
+      error = e instanceof Error ? e.message : "Unknown DB error";
     }
 
     return reply.send({
@@ -160,7 +194,7 @@ const homeRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  // Protect the Gateway UI
+  // Protect the Gateway UI (HTML)
   app.get("/", { preHandler: app.requireUiAuth }, async (req, reply) => {
     const start = Date.now();
     let connected = false;
@@ -177,7 +211,7 @@ const homeRoutes: FastifyPluginAsync = async (app) => {
 
     const user = (req as any).session?.user;
 
-    // Safety check (should not happen because of requireUiAuth)
+    // Safety check (should not happen due to requireUiAuth)
     if (!user?.email) {
       return reply.redirect("/login");
     }
@@ -185,7 +219,7 @@ const homeRoutes: FastifyPluginAsync = async (app) => {
     const email = String(user.email).toLowerCase();
 
     // ❌ NOT ALLOWED → ACCESS DENIED
-    if (!ALLOWED_EMAILS.has(email)) {
+    if (!canAccessGateway(email)) {
       return reply
         .code(403)
         .header("content-type", "text/html; charset=utf-8")

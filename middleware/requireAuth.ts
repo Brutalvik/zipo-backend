@@ -1,25 +1,25 @@
-import { type FastifyRequest, type FastifyReply } from "fastify";
-import { verifyIdToken } from "../lib/firebaseAdmin.js";
+import type { FastifyRequest, FastifyReply } from "fastify";
 
+/**
+ * Legacy middleware wrapper.
+ *
+ * ✅ Delegates to Fastify's `app.authenticate` (Firebase Admin verification).
+ * ✅ Keeps old routes working by ensuring `(req as any).user` is still set
+ *    (done inside app.authenticate).
+ *
+ * Once all routes use `{ preHandler: app.authenticate }`,
+ * you can delete this file and remove imports.
+ */
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
-  const auth = req.headers.authorization || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const serverAny = req.server as any;
 
-  if (!token) {
-    return reply
-      .code(401)
-      .send({ error: "Missing Authorization Bearer token" });
+  if (typeof serverAny.authenticate === "function") {
+    // app.authenticate sets req.authUser and also (req as any).user for legacy.
+    return serverAny.authenticate(req, reply);
   }
 
-  try {
-    const decoded = await verifyIdToken(token);
-
-    // attach decoded token to request
-    // @ts-ignore
-    req.user = decoded;
-
-    return;
-  } catch (e) {
-    return reply.code(401).send({ error: "Invalid or expired token" });
-  }
+  return reply.code(501).send({
+    error: "AUTH_NOT_AVAILABLE",
+    message: "Authentication is not configured on the server",
+  });
 }
