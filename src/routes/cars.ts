@@ -46,6 +46,11 @@ type CarsMapQuery = CarsListQuery &
     maxLat: string;
     minLng: string;
     maxLng: string;
+
+    // ✅ optional radius mode
+    lat: string;
+    lng: string;
+    radiusKm: string; // 1..50
   }>;
 
 type IdParams = { id: string };
@@ -84,6 +89,7 @@ type CarItem = {
   isFeatured: boolean;
   createdAt: string | null;
   updatedAt: string | null;
+  distanceKm?: number | null;
 };
 
 type PageMeta = { limit: number; offset: number; total: number };
@@ -180,6 +186,9 @@ function toCarItem(row: any): CarItem {
     isFeatured: !!row.is_featured,
     createdAt: row.created_at ?? null,
     updatedAt: row.updated_at ?? null,
+
+    // NEW (will be present for /cars/map when lat/lng/radiusKm are provided)
+    distanceKm: row.distance_km == null ? null : Number(row.distance_km),
   };
 }
 
@@ -502,30 +511,82 @@ const carsRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    // ✅ optional radius inputs
+    const lat = toNum(q.lat);
+    const lng = toNum(q.lng);
+    const radiusKmRaw = toNum(q.radiusKm);
+    const hasRadius = lat != null && lng != null && radiusKmRaw != null;
+    const radiusKm = hasRadius ? clamp(radiusKmRaw!, 1, 50) : undefined;
+
     const { where, params } = buildWhere(q);
 
     let i = params.length + 1;
+
+    // must have coords for map
     where.push(`pickup_lat IS NOT NULL AND pickup_lng IS NOT NULL`);
+
+    // bbox filter (existing)
     where.push(`pickup_lat BETWEEN $${i++} AND $${i++}`);
     (params as any[]).push(minLat, maxLat);
+
     where.push(`pickup_lng BETWEEN $${i++} AND $${i++}`);
     (params as any[]).push(minLng, maxLng);
 
     // Default map to active if not specified
     if (!normalizeStr(q.status)) where.push(`status = 'active'`);
 
+    // ✅ radius filter (only when provided)
+    // Note: ST_MakePoint expects (lng, lat)
+    let distanceSelectSql = "";
+    let orderSql = buildOrder(q.sort);
+
+    if (hasRadius) {
+      const latIdx = i++;
+      (params as any[]).push(lat);
+
+      const lngIdx = i++;
+      (params as any[]).push(lng);
+
+      const radIdx = i++;
+      (params as any[]).push(radiusKm);
+
+      where.push(`
+        ST_DWithin(
+          ST_SetSRID(ST_MakePoint(pickup_lng, pickup_lat), 4326)::geography,
+          ST_SetSRID(ST_MakePoint($${lngIdx}, $${latIdx}), 4326)::geography,
+          ($${radIdx} * 1000.0)
+        )
+      `);
+
+      distanceSelectSql = `,
+        ROUND(
+          (
+            ST_Distance(
+              ST_SetSRID(ST_MakePoint(pickup_lng, pickup_lat), 4326)::geography,
+              ST_SetSRID(ST_MakePoint($${lngIdx}, $${latIdx}), 4326)::geography
+            ) / 1000.0
+          )::numeric,
+          1
+        ) AS distance_km
+      `;
+
+      // nearest-first (then your sort)
+      orderSql = `distance_km ASC NULLS LAST, ${orderSql}`;
+    }
+
     const whereSql = `WHERE ${where.join(" AND ")}`;
     const limit = clamp(Number(q.limit ?? 200) || 200, 1, 500);
-    const orderBy = buildOrder(q.sort);
 
     try {
       const sql = `
         SELECT ${selectBaseFields()}
+        ${distanceSelectSql}
         FROM cars
         ${whereSql}
-        ORDER BY ${orderBy}
+        ORDER BY ${orderSql}
         LIMIT ${limit};
       `;
+
       const res = await app.db.query(sql, params);
       return reply.send({ items: (res.rows ?? []).map(toCarItem) });
     } catch (err) {
