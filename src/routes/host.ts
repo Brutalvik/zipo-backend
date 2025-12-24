@@ -584,9 +584,11 @@ const hostRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(201).send({ car: rows[0] });
       } catch (e: any) {
         req.log.error({ err: e }, "POST /host/cars failed");
-        return reply
-          .code(500)
-          .send({ error: "INTERNAL_ERROR", message: "Failed to create car." });
+
+        return reply.code(500).send({
+          error: "INTERNAL_ERROR",
+          message: e?.detail || e?.message || "Failed to create car.",
+        });
       }
     }
   );
@@ -673,46 +675,83 @@ const hostRoutes: FastifyPluginAsync = async (app) => {
 
       const { id } = req.params as { id: string };
       const carId = String(id || "").trim();
-      if (!carId)
+      if (!carId) {
         return reply
           .code(400)
           .send({ error: "VALIDATION_ERROR", message: "id is required." });
+      }
 
       try {
         const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
         if (!userId) return reply.code(404).send({ error: "User not found" });
 
-        // Optional: only approved hosts can publish cars
-        // const host = await getHostByUserId(app, userId);
-        // if (!host) return reply.code(404).send({ error: "HOST_NOT_FOUND" });
-        // if (host.status !== "approved") {
-        //   return reply.code(403).send({ error: "HOST_NOT_APPROVED", message: "Host must be approved to publish cars." });
-        // }
+        // ✅ Transaction so car publish never "half succeeds"
+        await app.db.query("BEGIN");
 
-        const { rows } = await app.db.query(
+        // 1) Publish the car (your original logic)
+        const carRes = await app.db.query(
           `
-        UPDATE cars
-        SET status = 'active'::car_status,
-            updated_at = now()
-        WHERE id = $1
-          AND host_user_id = $2
-          AND deleted_at IS NULL
-        RETURNING *
-        `,
+          UPDATE cars
+          SET status = 'active'::car_status,
+              updated_at = now()
+          WHERE id = $1
+            AND host_user_id = $2
+            AND deleted_at IS NULL
+          RETURNING *
+          `,
           [carId, userId]
         );
 
-        if (!rows[0])
+        const car = carRes.rows[0];
+        if (!car) {
+          await app.db.query("ROLLBACK");
           return reply.code(404).send({
             error: "NOT_FOUND",
             message: "Car not found (or not owned by you).",
           });
-        return reply.send({ car: rows[0] });
+        }
+
+        // 2) Auto-approve host (fix: set approved_at + submitted_at)
+        // NOTE: this assumes your DB has approved_at constraint when status='approved'
+        const hostRes = await app.db.query(
+          `
+          UPDATE hosts
+          SET status = 'approved'::host_status,
+              approved_at = COALESCE(approved_at, now()),
+              submitted_at = COALESCE(submitted_at, now()),
+              updated_at = now()
+          WHERE user_id = $1
+          RETURNING *
+          `,
+          [userId]
+        );
+
+        // If no host row exists, we won't fail publishing the car — but you can choose to fail if you want.
+        const host = hostRes.rows[0] ?? null;
+
+        await app.db.query("COMMIT");
+        return reply.send({ car, host });
       } catch (e: any) {
-        req.log.error({ err: e }, "POST /host/cars/:id/publish failed");
-        return reply
-          .code(500)
-          .send({ error: "INTERNAL_ERROR", message: "Failed to publish car." });
+        try {
+          await app.db.query("ROLLBACK");
+        } catch {}
+
+        req.log.error(
+          {
+            code: e?.code,
+            table: e?.table,
+            column: e?.column,
+            constraint: e?.constraint,
+            detail: e?.detail,
+            message: e?.message,
+          },
+          "POST /host/cars/:id/publish failed"
+        );
+
+        return reply.code(500).send({
+          error: "INTERNAL_ERROR",
+          message: e?.detail || e?.message || "Failed to publish car.",
+        });
       }
     }
   );
