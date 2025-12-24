@@ -10,6 +10,7 @@ import homeRoutes from "./routes/home.js";
 import carsRoutes from "./routes/cars.js";
 import userModeRoutes from "./routes/userMode.js";
 import userRoutes from "./routes/user.js";
+import hostRoutes from "./routes/host.js";
 
 // Application builder
 export function buildApp(): FastifyInstance {
@@ -28,6 +29,7 @@ export function buildApp(): FastifyInstance {
   app.register(carsRoutes, { prefix: "/api" });
   app.register(userModeRoutes, { prefix: "/api" });
   app.register(userRoutes, { prefix: "/api" });
+  app.register(hostRoutes, { prefix: "/api" });
 
   return app;
 }
