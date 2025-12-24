@@ -1,4 +1,6 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
+import crypto from "crypto";
+import { gcsBucket, gcsPublicUrl } from "../../lib/gcs.js";
 
 /**
  * Host routes (future-proof V1)
@@ -761,6 +763,224 @@ const hostRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(500).send({
           error: "INTERNAL_ERROR",
           message: "Failed to unpublish car.",
+        });
+      }
+    }
+  );
+  /**
+   * * POST /api/host/cars/:id/photos/upload-url
+   * Generates a signed upload URL for adding a car photo
+   */
+  app.post(
+    "/host/cars/:id/photos/upload-url",
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const auth = getAuth(req);
+      if (!auth) return reply.code(401).send({ error: "Unauthorized" });
+
+      const { id } = req.params as { id: string };
+      const carId = String(id || "").trim();
+      if (!carId) {
+        return reply
+          .code(400)
+          .send({ error: "VALIDATION_ERROR", message: "id is required." });
+      }
+
+      const body = (req.body ?? {}) as {
+        mimeType: string;
+        fileName?: string;
+      };
+
+      const mimeType = String(body?.mimeType || "")
+        .trim()
+        .toLowerCase();
+      const allowed = new Set([
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp",
+      ]);
+      if (!allowed.has(mimeType)) {
+        return reply.code(400).send({
+          error: "VALIDATION_ERROR",
+          message: "Only image/jpeg, image/png, image/webp are allowed.",
+        });
+      }
+
+      const ext = mimeType.includes("png")
+        ? "png"
+        : mimeType.includes("webp")
+        ? "webp"
+        : "jpg";
+
+      try {
+        const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
+        if (!userId) return reply.code(404).send({ error: "User not found" });
+
+        // verify car belongs to this host user
+        const { rows: carRows } = await app.db.query(
+          `
+          SELECT id, host_user_id, image_gallery
+          FROM cars
+          WHERE id = $1
+            AND host_user_id = $2
+            AND deleted_at IS NULL
+          LIMIT 1
+          `,
+          [carId, userId]
+        );
+        const car = carRows[0];
+        if (!car) {
+          return reply.code(404).send({
+            error: "NOT_FOUND",
+            message: "Car not found (or not owned by you).",
+          });
+        }
+
+        const photoId = crypto.randomUUID();
+        const objectPath = `cars/${carId}/${photoId}.${ext}`;
+
+        const file = gcsBucket.file(objectPath);
+
+        const [uploadUrl] = await file.getSignedUrl({
+          version: "v4",
+          action: "write",
+          expires: Date.now() + 15 * 60 * 1000, // 15 min
+          contentType: mimeType,
+        });
+
+        return reply.send({
+          uploadUrl,
+          photo: {
+            id: photoId,
+            path: objectPath,
+            mime: mimeType,
+            url: gcsPublicUrl(objectPath), // if bucket private, still OK to store path; url may not be viewable
+          },
+        });
+      } catch (e: any) {
+        req.log.error({ err: e }, "upload-url failed");
+        return reply.code(500).send({
+          error: "INTERNAL_ERROR",
+          message: "Failed to generate upload URL.",
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /api/host/cars/:id/photos/finalize
+   * Finalizes uploaded photos by adding them to the car's image_gallery
+   */
+
+  app.post(
+    "/host/cars/:id/photos/finalize",
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const auth = getAuth(req);
+      if (!auth) return reply.code(401).send({ error: "Unauthorized" });
+
+      const { id } = req.params as { id: string };
+      const carId = String(id || "").trim();
+      if (!carId) {
+        return reply
+          .code(400)
+          .send({ error: "VALIDATION_ERROR", message: "id is required." });
+      }
+
+      const body = (req.body ?? {}) as {
+        photos: Array<{
+          id: string;
+          path: string;
+          url?: string;
+          mime?: string;
+          width?: number;
+          height?: number;
+        }>;
+      };
+
+      const photos = Array.isArray(body.photos) ? body.photos : [];
+      const clean = photos
+        .map((p) => ({
+          id: typeof p?.id === "string" ? p.id : "",
+          path: typeof p?.path === "string" ? p.path : "",
+          url: typeof p?.url === "string" ? p.url : "",
+          mime: typeof p?.mime === "string" ? p.mime : "",
+          width: typeof p?.width === "number" ? p.width : undefined,
+          height: typeof p?.height === "number" ? p.height : undefined,
+          created_at: new Date().toISOString(),
+        }))
+        .filter((p) => p.id && p.path);
+
+      if (clean.length === 0) {
+        return reply.code(400).send({
+          error: "VALIDATION_ERROR",
+          message: "photos[] is required",
+        });
+      }
+
+      try {
+        const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
+        if (!userId) return reply.code(404).send({ error: "User not found" });
+
+        const { rows: carRows } = await app.db.query(
+          `
+          SELECT *
+          FROM cars
+          WHERE id = $1
+            AND host_user_id = $2
+            AND deleted_at IS NULL
+          LIMIT 1
+          `,
+          [carId, userId]
+        );
+        const car = carRows[0];
+        if (!car) {
+          return reply.code(404).send({
+            error: "NOT_FOUND",
+            message: "Car not found (or not owned by you).",
+          });
+        }
+
+        const existing = Array.isArray(car.image_gallery)
+          ? car.image_gallery
+          : [];
+
+        // merge by id
+        const map = new Map<string, any>();
+        for (const item of existing) {
+          if (item?.id) map.set(String(item.id), item);
+        }
+        for (const item of clean) {
+          map.set(String(item.id), {
+            ...item,
+            url: item.url || gcsPublicUrl(item.path),
+          });
+        }
+
+        const merged = Array.from(map.values());
+        const hasImage = merged.length > 0;
+
+        const { rows } = await app.db.query(
+          `
+          UPDATE cars
+          SET image_gallery = $1::jsonb,
+              has_image = $2,
+              updated_at = now()
+          WHERE id = $3
+            AND host_user_id = $4
+            AND deleted_at IS NULL
+          RETURNING *
+          `,
+          [JSON.stringify(merged), hasImage, carId, userId]
+        );
+
+        return reply.send({ car: rows[0] });
+      } catch (e: any) {
+        req.log.error({ err: e }, "finalize failed");
+        return reply.code(500).send({
+          error: "INTERNAL_ERROR",
+          message: "Failed to finalize photos.",
         });
       }
     }
