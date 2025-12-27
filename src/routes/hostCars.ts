@@ -82,6 +82,21 @@ function parseLng(v: any): number | null {
   return n;
 }
 
+function safeJsonParse(v: any, fallback: any) {
+  if (v == null) return fallback;
+  if (typeof v === "object") return v;
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return fallback;
+    try {
+      return JSON.parse(s);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 /**
  * Extract pickup fields from either:
  *  - top-level body.pickup_lat / pickup_lng / pickup_address
@@ -99,7 +114,7 @@ function extractPickupPatch(body: any) {
   const topCountry = cleanTextOrNull(body?.pickup_country);
   const topPostal = cleanTextOrNull(body?.pickup_postal_code);
 
-  // 2) nested features.pickup (your buggy flow)
+  // 2) nested features.pickup
   const pickupObj = body?.features?.pickup;
   const nestedLat =
     pickupObj && isPlainObject(pickupObj)
@@ -150,6 +165,75 @@ function extractPickupPatch(body: any) {
   if (postal !== null) out.pickup_postal_code = postal;
 
   return out;
+}
+
+function pickString(v: any): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s.length ? s : null;
+}
+
+function pickInt(v: any): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
+/**
+ * Denormalize fields from either:
+ * - top-level request body (preferred)
+ * - OR body.features.* (fallback)
+ *
+ * This guarantees real columns get updated correctly.
+ */
+function denormCarColumnsFromBody(body: any) {
+  const features = safeJsonParse(body?.features, {});
+  const vehicle = safeJsonParse(features?.vehicle, {});
+  const address = safeJsonParse(features?.address, {});
+  const pickup = safeJsonParse(features?.pickup, {});
+
+  // NOTE: "body_type" is its own column; do NOT confuse with "vehicle_type"
+  const bodyType =
+    pickString(body?.body_type) ?? pickString(vehicle?.body_type) ?? null;
+
+  return {
+    make: pickString(body?.make) ?? pickString(vehicle?.make) ?? null,
+    model: pickString(body?.model) ?? pickString(vehicle?.model) ?? null,
+    trim: pickString(body?.trim) ?? pickString(vehicle?.trim) ?? null,
+    year: pickInt(body?.year) ?? pickInt(vehicle?.year) ?? null,
+
+    body_type: bodyType ?? null,
+    fuel_type:
+      pickString(body?.fuel_type) ?? pickString(vehicle?.fuel_type) ?? null,
+
+    pickup_city:
+      pickString(body?.pickup_city) ??
+      pickString(pickup?.pickup_city) ??
+      pickString(address?.city) ??
+      pickString(body?.city) ??
+      null,
+
+    pickup_state:
+      pickString(body?.pickup_state) ??
+      pickString(pickup?.pickup_state) ??
+      pickString(address?.province) ??
+      pickString(body?.area) ??
+      pickString(body?.province) ??
+      null,
+
+    pickup_country:
+      pickString(body?.pickup_country) ??
+      pickString(pickup?.pickup_country) ??
+      pickString(address?.country_code) ??
+      pickString(body?.country_code) ??
+      null,
+
+    pickup_postal_code:
+      pickString(body?.pickup_postal_code) ??
+      pickString(pickup?.pickup_postal_code) ??
+      pickString(address?.postal_code) ??
+      null,
+  };
 }
 
 /**
@@ -208,6 +292,25 @@ function sanitizeCarCreate(body: any) {
   if (body?.pricing_rules && isPlainObject(body.pricing_rules))
     out.pricing_rules = body.pricing_rules;
 
+  // ✅ NEW: denorm core columns from features.vehicle/address/pickup on create too
+  const denorm = denormCarColumnsFromBody(body);
+  if (denorm.make) out.make = denorm.make;
+  if (denorm.model) out.model = denorm.model;
+  if (denorm.trim) out.trim = denorm.trim;
+  if (denorm.year != null) out.year = clampInt(denorm.year, 1900, 2100);
+  if (denorm.body_type) out.body_type = denorm.body_type;
+  if (denorm.fuel_type) out.fuel_type = denorm.fuel_type;
+
+  // pickup_* fallbacks if not already set by extractPickupPatch
+  if (out.pickup_city === undefined && denorm.pickup_city)
+    out.pickup_city = denorm.pickup_city;
+  if (out.pickup_state === undefined && denorm.pickup_state)
+    out.pickup_state = denorm.pickup_state;
+  if (out.pickup_country === undefined && denorm.pickup_country)
+    out.pickup_country = denorm.pickup_country;
+  if (out.pickup_postal_code === undefined && denorm.pickup_postal_code)
+    out.pickup_postal_code = denorm.pickup_postal_code;
+
   return out;
 }
 
@@ -261,7 +364,7 @@ function sanitizeCarPatch(body: any) {
   // ✅ pickup fields (top-level or nested)
   Object.assign(out, extractPickupPatch(body));
 
-  // car meta text
+  // car meta text (top-level)
   const make = cleanTextOrNull(body?.make);
   if (make !== null) out.make = make;
 
@@ -270,6 +373,13 @@ function sanitizeCarPatch(body: any) {
 
   const trim = cleanTextOrNull(body?.trim);
   if (trim !== null) out.trim = trim;
+
+  // NEW: body_type + fuel_type (top-level)
+  const bodyType = cleanTextOrNull(body?.body_type);
+  if (bodyType !== null) out.body_type = bodyType;
+
+  const fuelType = cleanTextOrNull(body?.fuel_type);
+  if (fuelType !== null) out.fuel_type = fuelType;
 
   // flags
   if (typeof body?.image_path === "string")
@@ -293,6 +403,29 @@ function sanitizeCarPatch(body: any) {
     out.requirements = body.requirements;
   if (body?.pricing_rules && isPlainObject(body.pricing_rules))
     out.pricing_rules = body.pricing_rules;
+
+  // ✅ NEW: denorm from features.* as fallback (this is what fixes your blanks)
+  const denorm = denormCarColumnsFromBody(body);
+
+  // only apply fallback if the top-level field wasn't provided in patch
+  if (out.make === undefined && denorm.make) out.make = denorm.make;
+  if (out.model === undefined && denorm.model) out.model = denorm.model;
+  if (out.trim === undefined && denorm.trim) out.trim = denorm.trim;
+  if (out.year === undefined && denorm.year != null)
+    out.year = clampInt(denorm.year, 1900, 2100);
+  if (out.body_type === undefined && denorm.body_type)
+    out.body_type = denorm.body_type;
+  if (out.fuel_type === undefined && denorm.fuel_type)
+    out.fuel_type = denorm.fuel_type;
+
+  if (out.pickup_city === undefined && denorm.pickup_city)
+    out.pickup_city = denorm.pickup_city;
+  if (out.pickup_state === undefined && denorm.pickup_state)
+    out.pickup_state = denorm.pickup_state;
+  if (out.pickup_country === undefined && denorm.pickup_country)
+    out.pickup_country = denorm.pickup_country;
+  if (out.pickup_postal_code === undefined && denorm.pickup_postal_code)
+    out.pickup_postal_code = denorm.pickup_postal_code;
 
   return out;
 }
@@ -343,7 +476,6 @@ function buildUpdateSql(patch: Record<string, any>) {
     const v = patch[k];
 
     if (JSONB_COLS.has(k)) {
-      // IMPORTANT: always pass a valid JSON string and cast to jsonb
       sets.push(`${k} = $${idx + 1}::jsonb`);
       values.push(JSON.stringify(v ?? (k === "image_gallery" ? [] : {})));
       return;
@@ -359,81 +491,27 @@ function buildUpdateSql(patch: Record<string, any>) {
   return { keys, sets, values };
 }
 
-function pickString(v: any): string | null {
-  if (typeof v !== "string") return null;
-  const s = v.trim();
-  return s.length ? s : null;
-}
-
-function pickInt(v: any): number | null {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
-  return Math.trunc(n);
-}
-
-/**
- * Denormalize fields from either:
- * - top-level request body (preferred)
- * - OR body.features.* (fallback)
- *
- * This guarantees real columns get updated correctly.
- */
-function denormCarColumnsFromBody(body: any) {
-  const features = body?.features ?? {};
-  const vehicle = features?.vehicle ?? {};
-  const address = features?.address ?? {};
-  const pickup = features?.pickup ?? {};
-
-  const bodyType =
-    pickString(body?.body_type) ??
-    pickString(body?.vehicle_type) ??
-    pickString(vehicle?.body_type) ??
-    pickString(vehicle?.vehicle_type) ??
-    null;
+// keep list response consistent + typed + no empty-string lies
+function normalizeCarRow(row: any) {
+  const features = safeJsonParse(row?.features, {});
+  const requirements = safeJsonParse(row?.requirements, {});
+  const pricing_rules = safeJsonParse(row?.pricing_rules, {});
+  const image_gallery = safeJsonParse(row?.image_gallery, []);
 
   return {
-    make: pickString(body?.make) ?? pickString(vehicle?.make) ?? null,
-    model: pickString(body?.model) ?? pickString(vehicle?.model) ?? null,
-    trim: pickString(body?.trim) ?? pickString(vehicle?.trim) ?? null,
-    year: pickInt(body?.year) ?? pickInt(vehicle?.year) ?? null,
-
-    body_type: bodyType ?? null,
-    fuel_type:
-      pickString(body?.fuel_type) ?? pickString(vehicle?.fuel_type) ?? null,
-
-    pickup_city:
-      pickString(body?.pickup_city) ??
-      pickString(pickup?.pickup_city) ??
-      pickString(address?.city) ??
-      pickString(body?.city) ??
-      null,
-
-    pickup_state:
-      pickString(body?.pickup_state) ??
-      pickString(pickup?.pickup_state) ??
-      pickString(address?.province) ??
-      pickString(body?.area) ??
-      pickString(body?.province) ??
-      null,
-
-    pickup_country:
-      pickString(body?.pickup_country) ??
-      pickString(pickup?.pickup_country) ??
-      pickString(address?.country_code) ??
-      pickString(body?.country_code) ??
-      null,
-
-    pickup_postal_code:
-      pickString(body?.pickup_postal_code) ??
-      pickString(pickup?.pickup_postal_code) ??
-      pickString(address?.postal_code) ??
-      null,
+    ...row,
+    features,
+    requirements,
+    pricing_rules,
+    image_gallery,
   };
 }
 
 const hostCarsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * GET /api/host/cars
+   * ✅ Change: do NOT SELECT *
+   * ✅ Change: return correct types AND fallback to JSON for make/model/year/pickup_* when columns are empty
    */
   app.get(
     "/host/cars",
@@ -455,7 +533,63 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
         const { rows } = await app.db.query(
           `
-          SELECT *
+          SELECT
+            id,
+            host_user_id,
+            title,
+            status,
+            vehicle_type,
+            transmission,
+            seats::int AS seats,
+            price_per_day::int AS price_per_day,
+            price_per_hour,
+            currency,
+            country_code,
+            city,
+            area,
+            full_address,
+
+            pickup_lat,
+            pickup_lng,
+            pickup_address,
+
+            -- IMPORTANT: treat "" as NULL, and fallback to features JSON
+            COALESCE(NULLIF(make, ''),  features->'vehicle'->>'make') AS make,
+            COALESCE(NULLIF(model,''),  features->'vehicle'->>'model') AS model,
+            COALESCE(NULLIF(trim, ''),  features->'vehicle'->>'trim') AS trim,
+
+            COALESCE(
+              year,
+              NULLIF((features->'vehicle'->>'year')::int, 0)
+            ) AS year,
+
+            COALESCE(NULLIF(body_type::text, ''), features->'vehicle'->>'body_type') AS body_type,
+            COALESCE(NULLIF(fuel_type::text, ''), features->'vehicle'->>'fuel_type') AS fuel_type,
+
+            doors,
+            ev_range_km,
+            odometer_km,
+
+            image_path,
+            image_public,
+            has_image,
+            image_gallery,
+
+            is_popular,
+            is_featured,
+
+            COALESCE(NULLIF(pickup_city,''),        features->'pickup'->>'pickup_city')        AS pickup_city,
+            COALESCE(NULLIF(pickup_state,''),       features->'pickup'->>'pickup_state')       AS pickup_state,
+            COALESCE(NULLIF(pickup_country,''),     features->'pickup'->>'pickup_country')     AS pickup_country,
+            COALESCE(NULLIF(pickup_postal_code,''), features->'pickup'->>'pickup_postal_code') AS pickup_postal_code,
+
+            features,
+            requirements,
+            pricing_rules,
+
+            created_at,
+            updated_at,
+            deleted_at
           FROM cars
           WHERE host_user_id = $1
             AND deleted_at IS NULL
@@ -476,7 +610,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
         );
 
         return reply.send({
-          items: rows,
+          items: rows.map(normalizeCarRow),
           page: { limit, offset, total: totalRes.rows[0]?.total ?? 0 },
         });
       } catch (e: any) {
@@ -491,6 +625,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * GET /api/host/cars/:id
+   * ✅ Change: same typed + fallback fields so details screen is consistent
    */
   app.get(
     "/host/cars/:id",
@@ -515,7 +650,62 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
         const { rows } = await app.db.query(
           `
-          SELECT *
+          SELECT
+            id,
+            host_user_id,
+            title,
+            status,
+            vehicle_type,
+            transmission,
+            seats::int AS seats,
+            price_per_day::int AS price_per_day,
+            price_per_hour,
+            currency,
+            country_code,
+            city,
+            area,
+            full_address,
+
+            pickup_lat,
+            pickup_lng,
+            pickup_address,
+
+            COALESCE(NULLIF(make, ''),  features->'vehicle'->>'make') AS make,
+            COALESCE(NULLIF(model,''),  features->'vehicle'->>'model') AS model,
+            COALESCE(NULLIF(trim, ''),  features->'vehicle'->>'trim') AS trim,
+
+            COALESCE(
+              year,
+              NULLIF((features->'vehicle'->>'year')::int, 0)
+            ) AS year,
+
+            COALESCE(NULLIF(body_type::text, ''), features->'vehicle'->>'body_type') AS body_type,
+            COALESCE(NULLIF(fuel_type::text, ''), features->'vehicle'->>'fuel_type') AS fuel_type,
+
+            doors,
+            ev_range_km,
+            odometer_km,
+
+            image_path,
+            image_public,
+            has_image,
+            image_gallery,
+
+            is_popular,
+            is_featured,
+
+            COALESCE(NULLIF(pickup_city,''),        features->'pickup'->>'pickup_city')        AS pickup_city,
+            COALESCE(NULLIF(pickup_state,''),       features->'pickup'->>'pickup_state')       AS pickup_state,
+            COALESCE(NULLIF(pickup_country,''),     features->'pickup'->>'pickup_country')     AS pickup_country,
+            COALESCE(NULLIF(pickup_postal_code,''), features->'pickup'->>'pickup_postal_code') AS pickup_postal_code,
+
+            features,
+            requirements,
+            pricing_rules,
+
+            created_at,
+            updated_at,
+            deleted_at
           FROM cars
           WHERE id = $1
             AND host_user_id = $2
@@ -532,7 +722,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           });
         }
 
-        return reply.send({ car: rows[0] });
+        return reply.send({ car: normalizeCarRow(rows[0]) });
       } catch (e: any) {
         req.log.error({ err: e }, "GET /host/cars/:id failed");
         return reply.code(500).send({
@@ -545,6 +735,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * POST /api/host/cars
+   * ✅ Change: sanitizeCarCreate now denorms from features.*
    */
   app.post(
     "/host/cars",
@@ -587,7 +778,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           vals
         );
 
-        return reply.code(201).send({ car: rows[0] });
+        return reply.code(201).send({ car: normalizeCarRow(rows[0]) });
       } catch (e: any) {
         req.log.error({ err: e }, "POST /host/cars failed");
         return reply.code(500).send({
@@ -600,7 +791,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * PATCH /api/host/cars/:id
-   * Updates host-owned car (status changes NOT allowed here)
+   * ✅ Change: sanitizeCarPatch now denorms from features.* as fallback
    */
   app.patch(
     "/host/cars/:id",
@@ -622,8 +813,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
         const patch = sanitizeCarPatch(req.body);
 
-        // If client sends pickup_lat but pickup_lng missing (or vice versa), we still accept,
-        // but map endpoints generally require both. Your UI should send both.
         const keys = Object.keys(patch);
         if (keys.length === 0) {
           return reply.code(400).send({
@@ -656,7 +845,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           });
         }
 
-        return reply.send({ car: rows[0] });
+        return reply.send({ car: normalizeCarRow(rows[0]) });
       } catch (e: any) {
         req.log.error({ err: e }, "PATCH /host/cars/:id failed");
         return reply
@@ -669,10 +858,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * DELETE /api/host/cars/:id
    * Soft "deactivate" (NO DB delete, NO bucket cleanup)
-   *
-   * Rationale:
-   * - Keeps car + photos for easy restore
-   * - Just hides it from public listings/map (if your public queries filter status=active)
    */
   app.delete(
     "/host/cars/:id",
@@ -693,16 +878,15 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
         const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
         if (!userId) return reply.code(404).send({ error: "User not found" });
 
-        // Ensure car exists + owned by this host
         const { rows: existingRows } = await app.db.query(
           `
-        SELECT id, status
-        FROM cars
-        WHERE id = $1
-          AND host_user_id = $2
-          AND deleted_at IS NULL
-        LIMIT 1
-        `,
+          SELECT id, status
+          FROM cars
+          WHERE id = $1
+            AND host_user_id = $2
+            AND deleted_at IS NULL
+          LIMIT 1
+          `,
           [carId, userId]
         );
 
@@ -714,22 +898,21 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           });
         }
 
-        // Mark inactive (do NOT delete row, do NOT touch bucket)
         const { rows } = await app.db.query(
           `
-        UPDATE cars
-        SET status = 'inactive',
-            updated_at = now()
-        WHERE id = $1
-          AND host_user_id = $2
-          AND deleted_at IS NULL
-        RETURNING *;
-        `,
+          UPDATE cars
+          SET status = 'inactive',
+              updated_at = now()
+          WHERE id = $1
+            AND host_user_id = $2
+            AND deleted_at IS NULL
+          RETURNING *;
+          `,
           [carId, userId]
         );
 
         return reply.send({
-          car: rows[0],
+          car: normalizeCarRow(rows[0]),
           note: "Car marked inactive. No files were deleted.",
         });
       } catch (e: any) {
@@ -742,6 +925,9 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
     }
   );
 
+  /**
+   * POST /api/host/cars/:id/activate
+   */
   app.post(
     "/host/cars/:id/activate",
     { preHandler: app.authenticate },
@@ -776,7 +962,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           });
         }
 
-        return reply.send({ car: rows[0] });
+        return reply.send({ car: normalizeCarRow(rows[0]) });
       } catch (e: any) {
         req.log.error({ err: e }, "POST /host/cars/:id/activate failed");
         return reply.code(500).send({
@@ -789,6 +975,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * POST /api/host/cars/:id/publish
+   * ✅ Change: uses NULLIF(column,'') so publish will overwrite "empty-string columns"
    */
   app.post(
     "/host/cars/:id/publish",
@@ -812,7 +999,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           });
         }
 
-        // ✅ IMPORTANT: your schema uses host_user_id (NOT host_id)
         const existingRes = await app.db.query(
           `SELECT * FROM cars WHERE id = $1 AND host_user_id = $2 AND deleted_at IS NULL LIMIT 1`,
           [carId, userId]
@@ -834,28 +1020,35 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           features: nextFeatures,
         });
 
-        // ✅ no published_at (column doesn't exist)
         const sql = `
           UPDATE cars
           SET
             status = 'active',
             updated_at = NOW(),
-  
+
             features = $1::jsonb,
-  
-            make = COALESCE($2, make),
-            model = COALESCE($3, model),
-            trim = COALESCE($4, trim),
-            year = COALESCE($5, year),
-  
-            body_type = COALESCE($6, body_type),
-            fuel_type = COALESCE($7, fuel_type),
-  
-            pickup_city = COALESCE($8, pickup_city),
-            pickup_state = COALESCE($9, pickup_state),
-            pickup_country = COALESCE($10, pickup_country),
-            pickup_postal_code = COALESCE($11, pickup_postal_code)
-  
+
+            -- treat "" as NULL on the column side so COALESCE can apply your denorm values
+            make  = COALESCE($2, NULLIF(make, '')),
+            model = COALESCE($3, NULLIF(model,'')),
+            trim  = COALESCE($4, NULLIF(trim, '')),
+            year  = COALESCE($5, year),
+
+            body_type = CASE
+            WHEN $6 IS NULL OR $6 = '' THEN body_type
+            ELSE $6::car_body_type
+          END,
+          
+          fuel_type = CASE
+            WHEN $7 IS NULL OR $7 = '' THEN fuel_type
+            ELSE $7::car_fuel_type
+          END,
+
+            pickup_city        = COALESCE($8,  NULLIF(pickup_city,'')),
+            pickup_state       = COALESCE($9,  NULLIF(pickup_state,'')),
+            pickup_country     = COALESCE($10, NULLIF(pickup_country,'')),
+            pickup_postal_code = COALESCE($11, NULLIF(pickup_postal_code,''))
+
           WHERE id = $12 AND host_user_id = $13 AND deleted_at IS NULL
           RETURNING *;
         `;
@@ -881,7 +1074,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
         ];
 
         const upd = await app.db.query(sql, params);
-        return reply.send({ car: upd.rows[0] });
+        return reply.send({ car: normalizeCarRow(upd.rows[0]) });
       } catch (e: any) {
         req.log.error({ err: e }, "POST /host/cars/:id/publish failed");
         return reply.code(500).send({
@@ -932,7 +1125,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
             message: "Car not found (or not owned by you).",
           });
 
-        return reply.send({ car: rows[0] });
+        return reply.send({ car: normalizeCarRow(rows[0]) });
       } catch (e: any) {
         req.log.error({ err: e }, "POST /host/cars/:id/unpublish failed");
         return reply.code(500).send({
@@ -1112,7 +1305,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
         const existing = Array.isArray(car.image_gallery)
           ? car.image_gallery
-          : [];
+          : safeJsonParse(car.image_gallery, []);
 
         const map = new Map<string, any>();
         for (const item of existing) {
@@ -1147,7 +1340,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           [JSON.stringify(merged), hasImage, coverUrl, carId, userId]
         );
 
-        return reply.send({ car: rows[0] });
+        return reply.send({ car: normalizeCarRow(rows[0]) });
       } catch (e: any) {
         req.log.error({ err: e }, "finalize failed");
         return reply.code(500).send({
