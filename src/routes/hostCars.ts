@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { gcsBucket, gcsPublicUrl } from "../../lib/gcs.js";
 
 /**
- * Host car routes (future-proof V1)
+ * Host car routes (V1)
  *
  * Mounted with prefix "/api" in app.ts:
  *   /api/host/cars
@@ -28,6 +28,273 @@ function isNonEmptyString(v: unknown): v is string {
 
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+function isPlainObject(v: any) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function cleanTextOrNull(v: any): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t.length ? t : null;
+}
+
+function cleanTextKeepEmpty(v: any): string | undefined {
+  // for required text fields we allow empty string if client sends it
+  if (typeof v !== "string") return undefined;
+  return v.trim();
+}
+
+function parseNumber(v: any): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return null;
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function parseIntLike(v: any): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
+  if (typeof v === "string") {
+    const digits = String(v).replace(/[^\d-]/g, "");
+    if (!digits) return null;
+    const n = Number(digits);
+    if (Number.isFinite(n)) return Math.trunc(n);
+  }
+  return null;
+}
+
+function parseLat(v: any): number | null {
+  const n = parseNumber(v);
+  if (n === null) return null;
+  if (n < -90 || n > 90) return null;
+  return n;
+}
+
+function parseLng(v: any): number | null {
+  const n = parseNumber(v);
+  if (n === null) return null;
+  if (n < -180 || n > 180) return null;
+  return n;
+}
+
+/**
+ * Extract pickup fields from either:
+ *  - top-level body.pickup_lat / pickup_lng / pickup_address
+ *  - or features.pickup.pickup_lat / pickup_lng / pickup_address (and other pickup_* fields)
+ */
+function extractPickupPatch(body: any) {
+  const out: Record<string, any> = {};
+
+  // 1) top-level
+  const topLat = parseLat(body?.pickup_lat);
+  const topLng = parseLng(body?.pickup_lng);
+  const topAddr = cleanTextOrNull(body?.pickup_address);
+  const topCity = cleanTextOrNull(body?.pickup_city);
+  const topState = cleanTextOrNull(body?.pickup_state);
+  const topCountry = cleanTextOrNull(body?.pickup_country);
+  const topPostal = cleanTextOrNull(body?.pickup_postal_code);
+
+  // 2) nested features.pickup (your buggy flow)
+  const pickupObj = body?.features?.pickup;
+  const nestedLat =
+    pickupObj && isPlainObject(pickupObj)
+      ? parseLat((pickupObj as any).pickup_lat)
+      : null;
+  const nestedLng =
+    pickupObj && isPlainObject(pickupObj)
+      ? parseLng((pickupObj as any).pickup_lng)
+      : null;
+  const nestedAddr =
+    pickupObj && isPlainObject(pickupObj)
+      ? cleanTextOrNull((pickupObj as any).pickup_address)
+      : null;
+
+  const nestedCity =
+    pickupObj && isPlainObject(pickupObj)
+      ? cleanTextOrNull((pickupObj as any).pickup_city)
+      : null;
+  const nestedState =
+    pickupObj && isPlainObject(pickupObj)
+      ? cleanTextOrNull((pickupObj as any).pickup_state)
+      : null;
+  const nestedCountry =
+    pickupObj && isPlainObject(pickupObj)
+      ? cleanTextOrNull((pickupObj as any).pickup_country)
+      : null;
+  const nestedPostal =
+    pickupObj && isPlainObject(pickupObj)
+      ? cleanTextOrNull((pickupObj as any).pickup_postal_code)
+      : null;
+
+  // Prefer top-level if provided; else fallback to nested
+  const lat = topLat ?? nestedLat;
+  const lng = topLng ?? nestedLng;
+  const addr = topAddr ?? nestedAddr;
+  const city = topCity ?? nestedCity;
+  const state = topState ?? nestedState;
+  const country = topCountry ?? nestedCountry;
+  const postal = topPostal ?? nestedPostal;
+
+  if (lat !== null) out.pickup_lat = lat;
+  if (lng !== null) out.pickup_lng = lng;
+  if (addr !== null) out.pickup_address = addr;
+
+  if (city !== null) out.pickup_city = city;
+  if (state !== null) out.pickup_state = state;
+  if (country !== null) out.pickup_country = country;
+  if (postal !== null) out.pickup_postal_code = postal;
+
+  return out;
+}
+
+/**
+ * IMPORTANT:
+ * Your DB has broken defaults ("" for numeric columns).
+ * So sanitize must accept BOTH number and numeric-string for numeric fields.
+ */
+function sanitizeCarCreate(body: any) {
+  const out: Record<string, any> = {};
+
+  // required-ish for create
+  if (isNonEmptyString(body?.title)) out.title = body.title.trim();
+  if (isNonEmptyString(body?.vehicle_type))
+    out.vehicle_type = body.vehicle_type.trim();
+  if (isNonEmptyString(body?.transmission))
+    out.transmission = body.transmission.trim();
+
+  // ints (accept numeric strings)
+  const seats = parseIntLike(body?.seats);
+  if (seats !== null) out.seats = clampInt(seats, 1, 99);
+
+  const ppd = parseIntLike(body?.price_per_day);
+  if (ppd !== null) out.price_per_day = clampInt(ppd, 0, 1_000_000);
+
+  // location text
+  if (typeof body?.country_code === "string")
+    out.country_code = body.country_code.trim().toUpperCase();
+  if (typeof body?.city === "string") out.city = body.city.trim();
+  if (typeof body?.area === "string") out.area = body.area.trim() || null;
+  if (typeof body?.full_address === "string")
+    out.full_address = body.full_address.trim();
+
+  // ✅ pickup fields (top-level or nested)
+  Object.assign(out, extractPickupPatch(body));
+
+  // images
+  if (typeof body?.image_path === "string")
+    out.image_path = body.image_path.trim();
+  if (typeof body?.image_public === "boolean")
+    out.image_public = body.image_public;
+  if (typeof body?.has_image === "boolean") out.has_image = body.has_image;
+
+  if (typeof body?.is_popular === "boolean") out.is_popular = body.is_popular;
+  if (typeof body?.is_featured === "boolean")
+    out.is_featured = body.is_featured;
+
+  // jsonb
+  if (body?.image_gallery && Array.isArray(body.image_gallery))
+    out.image_gallery = body.image_gallery;
+
+  // Allow features save BUT we will not rely on it for pickup coords anymore.
+  if (body?.features && isPlainObject(body.features))
+    out.features = body.features;
+  if (body?.requirements && isPlainObject(body.requirements))
+    out.requirements = body.requirements;
+  if (body?.pricing_rules && isPlainObject(body.pricing_rules))
+    out.pricing_rules = body.pricing_rules;
+
+  return out;
+}
+
+function sanitizeCarPatch(body: any) {
+  const out: Record<string, any> = {};
+
+  // text (allow empty if client explicitly sends empty strings)
+  const title = cleanTextKeepEmpty(body?.title);
+  if (title !== undefined) out.title = title;
+
+  const vt = cleanTextKeepEmpty(body?.vehicle_type);
+  if (vt !== undefined) out.vehicle_type = vt;
+
+  const tr = cleanTextKeepEmpty(body?.transmission);
+  if (tr !== undefined) out.transmission = tr;
+
+  // ints (accept numeric strings)
+  const seats = parseIntLike(body?.seats);
+  if (seats !== null) out.seats = clampInt(seats, 1, 99);
+
+  const ppd = parseIntLike(body?.price_per_day);
+  if (ppd !== null) out.price_per_day = clampInt(ppd, 0, 1_000_000);
+
+  const year = parseIntLike(body?.year);
+  if (year !== null) out.year = clampInt(year, 1900, 2100);
+
+  const doors = parseIntLike(body?.doors);
+  if (doors !== null) out.doors = clampInt(doors, 1, 10);
+
+  const ev = parseIntLike(body?.ev_range_km);
+  if (ev !== null) out.ev_range_km = clampInt(ev, 0, 2_000);
+
+  const odo = parseIntLike(body?.odometer_km);
+  if (odo !== null) out.odometer_km = clampInt(odo, 0, 2_000_000);
+
+  // numeric (accept numeric strings)
+  const pph = parseNumber(body?.price_per_hour);
+  if (pph !== null) out.price_per_hour = pph;
+
+  const dep = parseNumber(body?.deposit_amount);
+  if (dep !== null) out.deposit_amount = dep;
+
+  // country/city/address text
+  if (typeof body?.country_code === "string")
+    out.country_code = body.country_code.trim().toUpperCase();
+  if (typeof body?.city === "string") out.city = body.city.trim();
+  if (typeof body?.area === "string") out.area = body.area.trim() || null;
+  if (typeof body?.full_address === "string")
+    out.full_address = body.full_address.trim();
+
+  // ✅ pickup fields (top-level or nested)
+  Object.assign(out, extractPickupPatch(body));
+
+  // car meta text
+  const make = cleanTextOrNull(body?.make);
+  if (make !== null) out.make = make;
+
+  const model = cleanTextOrNull(body?.model);
+  if (model !== null) out.model = model;
+
+  const trim = cleanTextOrNull(body?.trim);
+  if (trim !== null) out.trim = trim;
+
+  // flags
+  if (typeof body?.image_path === "string")
+    out.image_path = body.image_path.trim();
+  if (typeof body?.image_public === "boolean")
+    out.image_public = body.image_public;
+  if (typeof body?.has_image === "boolean") out.has_image = body.has_image;
+
+  if (typeof body?.is_popular === "boolean") out.is_popular = body.is_popular;
+  if (typeof body?.is_featured === "boolean")
+    out.is_featured = body.is_featured;
+
+  // jsonb
+  if (body?.image_gallery && Array.isArray(body.image_gallery))
+    out.image_gallery = body.image_gallery;
+
+  // Allow features save BUT do not depend on it for pickup columns
+  if (body?.features && isPlainObject(body.features))
+    out.features = body.features;
+  if (body?.requirements && isPlainObject(body.requirements))
+    out.requirements = body.requirements;
+  if (body?.pricing_rules && isPlainObject(body.pricing_rules))
+    out.pricing_rules = body.pricing_rules;
+
+  return out;
 }
 
 async function getDbUserIdByFirebaseUid(
@@ -59,147 +326,109 @@ async function getHostByUserId(app: any, userId: string) {
   return rows[0] ?? null;
 }
 
-function sanitizeCarCreate(body: any) {
-  const out: Record<string, any> = {};
+function buildUpdateSql(patch: Record<string, any>) {
+  const keys = Object.keys(patch);
+  const sets: string[] = [];
+  const values: any[] = [];
 
-  if (isNonEmptyString(body?.title)) out.title = body.title.trim();
-  if (isNonEmptyString(body?.vehicle_type))
-    out.vehicle_type = body.vehicle_type.trim();
-  if (isNonEmptyString(body?.transmission))
-    out.transmission = body.transmission.trim();
+  // columns that are jsonb in your cars table
+  const JSONB_COLS = new Set([
+    "features",
+    "requirements",
+    "pricing_rules",
+    "image_gallery",
+  ]);
 
-  if (typeof body?.seats === "number" && Number.isFinite(body.seats))
-    out.seats = clampInt(Math.trunc(body.seats), 1, 99);
+  keys.forEach((k, idx) => {
+    const v = patch[k];
 
-  if (
-    typeof body?.price_per_day === "number" &&
-    Number.isFinite(body.price_per_day)
-  )
-    out.price_per_day = clampInt(Math.trunc(body.price_per_day), 0, 1_000_000);
+    if (JSONB_COLS.has(k)) {
+      // IMPORTANT: always pass a valid JSON string and cast to jsonb
+      sets.push(`${k} = $${idx + 1}::jsonb`);
+      values.push(JSON.stringify(v ?? (k === "image_gallery" ? [] : {})));
+      return;
+    }
 
-  if (typeof body?.country_code === "string")
-    out.country_code = body.country_code.trim().toUpperCase();
-  if (typeof body?.city === "string") out.city = body.city.trim();
-  if (typeof body?.area === "string") out.area = body.area.trim() || null;
-  if (typeof body?.full_address === "string")
-    out.full_address = body.full_address.trim();
+    sets.push(`${k} = $${idx + 1}`);
+    values.push(v);
+  });
 
-  if (typeof body?.pickup_lat === "number" && Number.isFinite(body.pickup_lat))
-    out.pickup_lat = body.pickup_lat;
-  if (typeof body?.pickup_lng === "number" && Number.isFinite(body.pickup_lng))
-    out.pickup_lng = body.pickup_lng;
-  if (typeof body?.pickup_address === "string")
-    out.pickup_address = body.pickup_address.trim() || null;
+  // always bump updated_at
+  sets.push(`updated_at = now()`);
 
-  if (typeof body?.image_path === "string")
-    out.image_path = body.image_path.trim();
-  if (typeof body?.image_public === "boolean")
-    out.image_public = body.image_public;
-  if (typeof body?.has_image === "boolean") out.has_image = body.has_image;
-
-  if (typeof body?.is_popular === "boolean") out.is_popular = body.is_popular;
-  if (typeof body?.is_featured === "boolean")
-    out.is_featured = body.is_featured;
-
-  if (body?.image_gallery && Array.isArray(body.image_gallery))
-    out.image_gallery = body.image_gallery;
-  if (
-    body?.features &&
-    typeof body.features === "object" &&
-    !Array.isArray(body.features)
-  )
-    out.features = body.features;
-  if (
-    body?.requirements &&
-    typeof body.requirements === "object" &&
-    !Array.isArray(body.requirements)
-  )
-    out.requirements = body.requirements;
-  if (
-    body?.pricing_rules &&
-    typeof body.pricing_rules === "object" &&
-    !Array.isArray(body.pricing_rules)
-  )
-    out.pricing_rules = body.pricing_rules;
-  return out;
+  return { keys, sets, values };
 }
 
-function sanitizeCarPatch(body: any) {
-  const out: Record<string, any> = {};
+function pickString(v: any): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s.length ? s : null;
+}
 
-  if (typeof body?.title === "string") out.title = body.title.trim();
-  if (typeof body?.vehicle_type === "string")
-    out.vehicle_type = body.vehicle_type.trim();
-  if (typeof body?.transmission === "string")
-    out.transmission = body.transmission.trim();
+function pickInt(v: any): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
 
-  if (typeof body?.seats === "number" && Number.isFinite(body.seats))
-    out.seats = clampInt(Math.trunc(body.seats), 1, 99);
+/**
+ * Denormalize fields from either:
+ * - top-level request body (preferred)
+ * - OR body.features.* (fallback)
+ *
+ * This guarantees real columns get updated correctly.
+ */
+function denormCarColumnsFromBody(body: any) {
+  const features = body?.features ?? {};
+  const vehicle = features?.vehicle ?? {};
+  const address = features?.address ?? {};
+  const pickup = features?.pickup ?? {};
 
-  if (
-    typeof body?.price_per_day === "number" &&
-    Number.isFinite(body.price_per_day)
-  )
-    out.price_per_day = clampInt(Math.trunc(body.price_per_day), 0, 1_000_000);
+  const bodyType =
+    pickString(body?.body_type) ??
+    pickString(body?.vehicle_type) ??
+    pickString(vehicle?.body_type) ??
+    pickString(vehicle?.vehicle_type) ??
+    null;
 
-  if (typeof body?.country_code === "string")
-    out.country_code = body.country_code.trim().toUpperCase();
-  if (typeof body?.city === "string") out.city = body.city.trim();
-  if (typeof body?.area === "string") out.area = body.area.trim() || null;
-  if (typeof body?.full_address === "string")
-    out.full_address = body.full_address.trim();
+  return {
+    make: pickString(body?.make) ?? pickString(vehicle?.make) ?? null,
+    model: pickString(body?.model) ?? pickString(vehicle?.model) ?? null,
+    trim: pickString(body?.trim) ?? pickString(vehicle?.trim) ?? null,
+    year: pickInt(body?.year) ?? pickInt(vehicle?.year) ?? null,
 
-  if (typeof body?.pickup_lat === "number" && Number.isFinite(body.pickup_lat))
-    out.pickup_lat = body.pickup_lat;
-  if (typeof body?.pickup_lng === "number" && Number.isFinite(body.pickup_lng))
-    out.pickup_lng = body.pickup_lng;
-  if (typeof body?.pickup_address === "string")
-    out.pickup_address = body.pickup_address.trim() || null;
+    body_type: bodyType ?? null,
+    fuel_type:
+      pickString(body?.fuel_type) ?? pickString(vehicle?.fuel_type) ?? null,
 
-  if (typeof body?.image_path === "string")
-    out.image_path = body.image_path.trim();
-  if (typeof body?.image_public === "boolean")
-    out.image_public = body.image_public;
-  if (typeof body?.has_image === "boolean") out.has_image = body.has_image;
+    pickup_city:
+      pickString(body?.pickup_city) ??
+      pickString(pickup?.pickup_city) ??
+      pickString(address?.city) ??
+      pickString(body?.city) ??
+      null,
 
-  if (typeof body?.is_popular === "boolean") out.is_popular = body.is_popular;
-  if (typeof body?.is_featured === "boolean")
-    out.is_featured = body.is_featured;
+    pickup_state:
+      pickString(body?.pickup_state) ??
+      pickString(pickup?.pickup_state) ??
+      pickString(address?.province) ??
+      pickString(body?.area) ??
+      pickString(body?.province) ??
+      null,
 
-  if (body?.image_gallery && Array.isArray(body.image_gallery))
-    out.image_gallery = body.image_gallery;
-  if (
-    body?.features &&
-    typeof body.features === "object" &&
-    !Array.isArray(body.features)
-  )
-    out.features = body.features;
-  if (
-    body?.requirements &&
-    typeof body.requirements === "object" &&
-    !Array.isArray(body.requirements)
-  )
-    out.requirements = body.requirements;
-  if (
-    body?.pricing_rules &&
-    typeof body.pricing_rules === "object" &&
-    !Array.isArray(body.pricing_rules)
-  )
-    out.pricing_rules = body.pricing_rules;
+    pickup_country:
+      pickString(body?.pickup_country) ??
+      pickString(pickup?.pickup_country) ??
+      pickString(address?.country_code) ??
+      pickString(body?.country_code) ??
+      null,
 
-  if (
-    typeof body?.odometer_km === "number" &&
-    Number.isFinite(body.odometer_km)
-  ) {
-    out.odometer_km = clampInt(Math.trunc(body.odometer_km), 1, 2_000_000);
-  } else if (typeof body?.odometer_km === "string") {
-    const n = Number(String(body.odometer_km).replace(/[^\d]/g, ""));
-    if (Number.isFinite(n) && n > 0) {
-      out.odometer_km = clampInt(Math.trunc(n), 1, 2_000_000);
-    }
-  }
-
-  return out;
+    pickup_postal_code:
+      pickString(body?.pickup_postal_code) ??
+      pickString(pickup?.pickup_postal_code) ??
+      pickString(address?.postal_code) ??
+      null,
+  };
 }
 
 const hostCarsRoutes: FastifyPluginAsync = async (app) => {
@@ -226,23 +455,23 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
         const { rows } = await app.db.query(
           `
-        SELECT *
-        FROM cars
-        WHERE host_user_id = $1
-          AND deleted_at IS NULL
-        ORDER BY updated_at DESC
-        LIMIT $2 OFFSET $3
-        `,
+          SELECT *
+          FROM cars
+          WHERE host_user_id = $1
+            AND deleted_at IS NULL
+          ORDER BY updated_at DESC
+          LIMIT $2 OFFSET $3
+          `,
           [userId, limit, offset]
         );
 
         const totalRes = await app.db.query(
           `
-        SELECT COUNT(*)::int AS total
-        FROM cars
-        WHERE host_user_id = $1
-          AND deleted_at IS NULL
-        `,
+          SELECT COUNT(*)::int AS total
+          FROM cars
+          WHERE host_user_id = $1
+            AND deleted_at IS NULL
+          `,
           [userId]
         );
 
@@ -262,7 +491,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * GET /api/host/cars/:id
-   * Loads a single host-owned car by id
    */
   app.get(
     "/host/cars/:id",
@@ -317,7 +545,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * POST /api/host/cars
-   * Creates a draft car owned by host (host_user_id = users.id)
    */
   app.post(
     "/host/cars",
@@ -353,17 +580,16 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
         const { rows } = await app.db.query(
           `
-        INSERT INTO cars (${cols.join(", ")})
-        VALUES (${placeholders.join(", ")})
-        RETURNING *
-        `,
+          INSERT INTO cars (${cols.join(", ")})
+          VALUES (${placeholders.join(", ")})
+          RETURNING *
+          `,
           vals
         );
 
         return reply.code(201).send({ car: rows[0] });
       } catch (e: any) {
         req.log.error({ err: e }, "POST /host/cars failed");
-
         return reply.code(500).send({
           error: "INTERNAL_ERROR",
           message: e?.detail || e?.message || "Failed to create car.",
@@ -374,7 +600,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * PATCH /api/host/cars/:id
-   * Updates host-owned car (does not allow status changes here)
+   * Updates host-owned car (status changes NOT allowed here)
    */
   app.patch(
     "/host/cars/:id",
@@ -393,42 +619,43 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
       try {
         const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
         if (!userId) return reply.code(404).send({ error: "User not found" });
+
         const patch = sanitizeCarPatch(req.body);
+
+        // If client sends pickup_lat but pickup_lng missing (or vice versa), we still accept,
+        // but map endpoints generally require both. Your UI should send both.
         const keys = Object.keys(patch);
-        if (keys.length === 0)
+        if (keys.length === 0) {
           return reply.code(400).send({
             error: "VALIDATION_ERROR",
             message: "No valid updates provided.",
           });
+        }
 
-        const sets: string[] = [];
-        const values: any[] = [];
-        keys.forEach((k, i) => {
-          sets.push(`${k} = $${i + 1}`);
-          values.push(patch[k]);
-        });
-        sets.push(`updated_at = now()`);
+        const { sets, values } = buildUpdateSql(patch);
 
         values.push(carId);
         values.push(userId);
 
         const { rows } = await app.db.query(
           `
-        UPDATE cars
-        SET ${sets.join(", ")}
-        WHERE id = $${keys.length + 1}
-          AND host_user_id = $${keys.length + 2}
-          AND deleted_at IS NULL
-        RETURNING *
-        `,
+          UPDATE cars
+          SET ${sets.join(", ")}
+          WHERE id = $${keys.length + 1}
+            AND host_user_id = $${keys.length + 2}
+            AND deleted_at IS NULL
+          RETURNING *
+          `,
           values
         );
 
-        if (!rows[0])
+        if (!rows[0]) {
           return reply.code(404).send({
             error: "NOT_FOUND",
             message: "Car not found (or not owned by you).",
           });
+        }
+
         return reply.send({ car: rows[0] });
       } catch (e: any) {
         req.log.error({ err: e }, "PATCH /host/cars/:id failed");
@@ -441,116 +668,14 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * DELETE /api/host/cars/:id
-   * Soft-deletes car row and deletes related images from GCS
+   * Soft "deactivate" (NO DB delete, NO bucket cleanup)
+   *
+   * Rationale:
+   * - Keeps car + photos for easy restore
+   * - Just hides it from public listings/map (if your public queries filter status=active)
    */
   app.delete(
     "/host/cars/:id",
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const auth = getAuth(req);
-      if (!auth) return reply.code(401).send({ error: "Unauthorized" });
-
-      const { id } = req.params as { id: string };
-      const carId = String(id || "").trim();
-      if (!carId)
-        return reply
-          .code(400)
-          .send({ error: "VALIDATION_ERROR", message: "id is required." });
-
-      try {
-        const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
-        if (!userId) return reply.code(404).send({ error: "User not found" });
-
-        // Load car first so we can delete its images
-        const { rows: carRows } = await app.db.query(
-          `
-          SELECT *
-          FROM cars
-          WHERE id = $1
-            AND host_user_id = $2
-            AND deleted_at IS NULL
-          LIMIT 1
-          `,
-          [carId, userId]
-        );
-
-        const car = carRows[0];
-        if (!car) {
-          return reply.code(404).send({
-            error: "NOT_FOUND",
-            message: "Car not found (or not owned by you).",
-          });
-        }
-
-        // Collect object paths to delete from GCS
-        const paths = new Set<string>();
-
-        const gallery = Array.isArray(car.image_gallery)
-          ? car.image_gallery
-          : [];
-        for (const it of gallery) {
-          const p =
-            typeof it === "string"
-              ? it
-              : typeof it?.path === "string"
-              ? String(it.path)
-              : "";
-          if (p) paths.add(p);
-        }
-
-        const imagePath =
-          typeof car.image_path === "string" ? car.image_path : "";
-        if (imagePath && !imagePath.startsWith("draft/")) {
-          // if image_path stored as object path (cars/...)
-          if (imagePath.startsWith("cars/")) paths.add(imagePath);
-        }
-
-        // Also delete EVERYTHING under cars/<carId>/ as a safety net
-        // (covers any objects not present in DB json)
-        await gcsBucket.deleteFiles({
-          prefix: `cars/${carId}/`,
-          force: true,
-        });
-
-        // Delete explicit paths too (harmless if already removed by prefix)
-        for (const p of paths) {
-          try {
-            await gcsBucket.file(p).delete({ ignoreNotFound: true } as any);
-          } catch {}
-        }
-
-        // Soft delete car row
-        const { rows } = await app.db.query(
-          `
-          UPDATE cars
-          SET deleted_at = now(),
-              updated_at = now()
-          WHERE id = $1
-            AND host_user_id = $2
-            AND deleted_at IS NULL
-          RETURNING *
-          `,
-          [carId, userId]
-        );
-
-        return reply.send({ car: rows[0] });
-      } catch (e: any) {
-        req.log.error({ err: e }, "DELETE /host/cars/:id failed");
-        return reply.code(500).send({
-          error: "INTERNAL_ERROR",
-          message: "Failed to delete car.",
-        });
-      }
-    }
-  );
-
-  /**
-   * POST /api/host/cars/:id/publish
-   * Sets status to 'active' (DB constraint already requires host_user_id)
-   * Optional gating: require host approved (commented)
-   */
-  app.post(
-    "/host/cars/:id/publish",
     { preHandler: app.authenticate },
     async (req, reply) => {
       const auth = getAuth(req);
@@ -568,72 +693,200 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
         const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
         if (!userId) return reply.code(404).send({ error: "User not found" });
 
-        // ✅ Transaction so car publish never "half succeeds"
-        await app.db.query("BEGIN");
-
-        // 1) Publish the car (your original logic)
-        const carRes = await app.db.query(
+        // Ensure car exists + owned by this host
+        const { rows: existingRows } = await app.db.query(
           `
-          UPDATE cars
-          SET status = 'active'::car_status,
-              updated_at = now()
-          WHERE id = $1
-            AND host_user_id = $2
-            AND deleted_at IS NULL
-          RETURNING *
-          `,
+        SELECT id, status
+        FROM cars
+        WHERE id = $1
+          AND host_user_id = $2
+          AND deleted_at IS NULL
+        LIMIT 1
+        `,
           [carId, userId]
         );
 
-        const car = carRes.rows[0];
-        if (!car) {
-          await app.db.query("ROLLBACK");
+        const existing = existingRows[0];
+        if (!existing) {
           return reply.code(404).send({
             error: "NOT_FOUND",
             message: "Car not found (or not owned by you).",
           });
         }
 
-        // 2) Auto-approve host (fix: set approved_at + submitted_at)
-        // NOTE: this assumes your DB has approved_at constraint when status='approved'
-        const hostRes = await app.db.query(
+        // Mark inactive (do NOT delete row, do NOT touch bucket)
+        const { rows } = await app.db.query(
           `
-          UPDATE hosts
-          SET status = 'approved'::host_status,
-              approved_at = COALESCE(approved_at, now()),
-              submitted_at = COALESCE(submitted_at, now()),
-              updated_at = now()
-          WHERE user_id = $1
-          RETURNING *
-          `,
-          [userId]
+        UPDATE cars
+        SET status = 'inactive',
+            updated_at = now()
+        WHERE id = $1
+          AND host_user_id = $2
+          AND deleted_at IS NULL
+        RETURNING *;
+        `,
+          [carId, userId]
         );
 
-        // If no host row exists, we won't fail publishing the car — but you can choose to fail if you want.
-        const host = hostRes.rows[0] ?? null;
-
-        await app.db.query("COMMIT");
-        return reply.send({ car, host });
+        return reply.send({
+          car: rows[0],
+          note: "Car marked inactive. No files were deleted.",
+        });
       } catch (e: any) {
-        try {
-          await app.db.query("ROLLBACK");
-        } catch {}
-
-        req.log.error(
-          {
-            code: e?.code,
-            table: e?.table,
-            column: e?.column,
-            constraint: e?.constraint,
-            detail: e?.detail,
-            message: e?.message,
-          },
-          "POST /host/cars/:id/publish failed"
-        );
-
+        req.log.error({ err: e }, "DELETE /host/cars/:id (deactivate) failed");
         return reply.code(500).send({
           error: "INTERNAL_ERROR",
-          message: e?.detail || e?.message || "Failed to publish car.",
+          message: "Failed to deactivate car.",
+        });
+      }
+    }
+  );
+
+  app.post(
+    "/host/cars/:id/activate",
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const auth = getAuth(req);
+      if (!auth) return reply.code(401).send({ error: "Unauthorized" });
+
+      const carId = String((req.params as any)?.id || "").trim();
+      if (!carId) return reply.code(400).send({ error: "Missing car id" });
+
+      try {
+        const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
+        if (!userId) return reply.code(404).send({ error: "User not found" });
+
+        const { rows } = await app.db.query(
+          `
+          UPDATE cars
+          SET status = 'active',
+              updated_at = now()
+          WHERE id = $1
+            AND host_user_id = $2
+            AND deleted_at IS NULL
+          RETURNING *;
+          `,
+          [carId, userId]
+        );
+
+        if (!rows[0]) {
+          return reply.code(404).send({
+            error: "NOT_FOUND",
+            message: "Car not found (or not owned by you).",
+          });
+        }
+
+        return reply.send({ car: rows[0] });
+      } catch (e: any) {
+        req.log.error({ err: e }, "POST /host/cars/:id/activate failed");
+        return reply.code(500).send({
+          error: "INTERNAL_ERROR",
+          message: "Failed to activate car.",
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /api/host/cars/:id/publish
+   */
+  app.post(
+    "/host/cars/:id/publish",
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const auth = getAuth(req);
+      if (!auth) return reply.code(401).send({ error: "Unauthorized" });
+
+      const carId = String((req.params as any)?.id || "").trim();
+      if (!carId) return reply.code(400).send({ error: "Missing car id" });
+
+      try {
+        const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
+        if (!userId) return reply.code(404).send({ error: "User not found" });
+
+        const host = await getHostByUserId(app, userId);
+        if (!host) {
+          return reply.code(404).send({
+            error: "HOST_NOT_FOUND",
+            message: "Host profile not found.",
+          });
+        }
+
+        // ✅ IMPORTANT: your schema uses host_user_id (NOT host_id)
+        const existingRes = await app.db.query(
+          `SELECT * FROM cars WHERE id = $1 AND host_user_id = $2 AND deleted_at IS NULL LIMIT 1`,
+          [carId, userId]
+        );
+
+        const existing = existingRes.rows?.[0];
+        if (!existing) return reply.code(404).send({ error: "CAR_NOT_FOUND" });
+
+        const body = (req.body ?? {}) as any;
+
+        // Merge features: keep existing.features unless provided
+        const nextFeatures =
+          body.features && typeof body.features === "object"
+            ? body.features
+            : existing.features ?? {};
+
+        const denorm = denormCarColumnsFromBody({
+          ...body,
+          features: nextFeatures,
+        });
+
+        // ✅ no published_at (column doesn't exist)
+        const sql = `
+          UPDATE cars
+          SET
+            status = 'active',
+            updated_at = NOW(),
+  
+            features = $1::jsonb,
+  
+            make = COALESCE($2, make),
+            model = COALESCE($3, model),
+            trim = COALESCE($4, trim),
+            year = COALESCE($5, year),
+  
+            body_type = COALESCE($6, body_type),
+            fuel_type = COALESCE($7, fuel_type),
+  
+            pickup_city = COALESCE($8, pickup_city),
+            pickup_state = COALESCE($9, pickup_state),
+            pickup_country = COALESCE($10, pickup_country),
+            pickup_postal_code = COALESCE($11, pickup_postal_code)
+  
+          WHERE id = $12 AND host_user_id = $13 AND deleted_at IS NULL
+          RETURNING *;
+        `;
+
+        const params = [
+          JSON.stringify(nextFeatures),
+
+          denorm.make,
+          denorm.model,
+          denorm.trim,
+          denorm.year,
+
+          denorm.body_type,
+          denorm.fuel_type,
+
+          denorm.pickup_city,
+          denorm.pickup_state,
+          denorm.pickup_country,
+          denorm.pickup_postal_code,
+
+          carId,
+          userId,
+        ];
+
+        const upd = await app.db.query(sql, params);
+        return reply.send({ car: upd.rows[0] });
+      } catch (e: any) {
+        req.log.error({ err: e }, "POST /host/cars/:id/publish failed");
+        return reply.code(500).send({
+          error: "INTERNAL_ERROR",
+          message: "Failed to publish car.",
         });
       }
     }
@@ -641,7 +894,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * POST /api/host/cars/:id/unpublish
-   * Sets status back to 'draft'
    */
   app.post(
     "/host/cars/:id/unpublish",
@@ -663,14 +915,14 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
         const { rows } = await app.db.query(
           `
-        UPDATE cars
-        SET status = 'draft'::car_status,
-            updated_at = now()
-        WHERE id = $1
-          AND host_user_id = $2
-          AND deleted_at IS NULL
-        RETURNING *
-        `,
+          UPDATE cars
+          SET status = 'draft'::car_status,
+              updated_at = now()
+          WHERE id = $1
+            AND host_user_id = $2
+            AND deleted_at IS NULL
+          RETURNING *
+          `,
           [carId, userId]
         );
 
@@ -679,6 +931,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
             error: "NOT_FOUND",
             message: "Car not found (or not owned by you).",
           });
+
         return reply.send({ car: rows[0] });
       } catch (e: any) {
         req.log.error({ err: e }, "POST /host/cars/:id/unpublish failed");
@@ -691,8 +944,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
   );
 
   /**
-   * * POST /api/host/cars/:id/photos/upload-url
-   * Generates a signed upload URL for adding a car photo
+   * POST /api/host/cars/:id/photos/upload-url
    */
   app.post(
     "/host/cars/:id/photos/upload-url",
@@ -709,10 +961,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           .send({ error: "VALIDATION_ERROR", message: "id is required." });
       }
 
-      const body = (req.body ?? {}) as {
-        mimeType: string;
-        fileName?: string;
-      };
+      const body = (req.body ?? {}) as { mimeType: string; fileName?: string };
 
       const mimeType = String(body?.mimeType || "")
         .trim()
@@ -740,7 +989,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
         const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
         if (!userId) return reply.code(404).send({ error: "User not found" });
 
-        // verify car belongs to this host user
         const { rows: carRows } = await app.db.query(
           `
           SELECT id, host_user_id, image_gallery
@@ -762,13 +1010,12 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
         const photoId = crypto.randomUUID();
         const objectPath = `cars/${carId}/${photoId}.${ext}`;
-
         const file = gcsBucket.file(objectPath);
 
         const [uploadUrl] = await file.getSignedUrl({
           version: "v4",
           action: "write",
-          expires: Date.now() + 15 * 60 * 1000, // 15 min
+          expires: Date.now() + 15 * 60 * 1000,
           contentType: mimeType,
         });
 
@@ -778,7 +1025,7 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
             id: photoId,
             path: objectPath,
             mime: mimeType,
-            url: gcsPublicUrl(objectPath), // if bucket private, still OK to store path; url may not be viewable
+            url: gcsPublicUrl(objectPath),
           },
         });
       } catch (e: any) {
@@ -793,7 +1040,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * POST /api/host/cars/:id/photos/finalize
-   * Finalizes uploaded photos by adding them to the car's image_gallery
    */
   app.post(
     "/host/cars/:id/photos/finalize",
@@ -868,7 +1114,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
           ? car.image_gallery
           : [];
 
-        // merge by id
         const map = new Map<string, any>();
         for (const item of existing) {
           if (item?.id) map.set(String(item.id), item);
@@ -883,7 +1128,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
         const merged = Array.from(map.values());
         const hasImage = merged.length > 0;
 
-        // choose cover url (first photo)
         const coverUrl = hasImage
           ? String(merged[0]?.url || gcsPublicUrl(merged[0]?.path || "")).trim()
           : "draft/placeholder.jpg";

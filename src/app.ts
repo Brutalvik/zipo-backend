@@ -12,6 +12,7 @@ import userModeRoutes from "./routes/userMode.js";
 import userRoutes from "./routes/user.js";
 import hostRoutes from "./routes/host.js";
 import hostCarsRoutes from "./routes/hostCars.js";
+import geocodeRoutes from "./routes/geocode.js";
 
 // Application builder
 export function buildApp(): FastifyInstance {
@@ -32,6 +33,7 @@ export function buildApp(): FastifyInstance {
   app.register(userRoutes, { prefix: "/api" });
   app.register(hostRoutes, { prefix: "/api" });
   app.register(hostCarsRoutes, { prefix: "/api" });
+  app.register(geocodeRoutes, { prefix: "/api" });
 
   return app;
 }
