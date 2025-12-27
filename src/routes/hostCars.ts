@@ -121,7 +121,6 @@ function sanitizeCarCreate(body: any) {
     !Array.isArray(body.pricing_rules)
   )
     out.pricing_rules = body.pricing_rules;
-
   return out;
 }
 
@@ -187,6 +186,18 @@ function sanitizeCarPatch(body: any) {
     !Array.isArray(body.pricing_rules)
   )
     out.pricing_rules = body.pricing_rules;
+
+  if (
+    typeof body?.odometer_km === "number" &&
+    Number.isFinite(body.odometer_km)
+  ) {
+    out.odometer_km = clampInt(Math.trunc(body.odometer_km), 1, 2_000_000);
+  } else if (typeof body?.odometer_km === "string") {
+    const n = Number(String(body.odometer_km).replace(/[^\d]/g, ""));
+    if (Number.isFinite(n) && n > 0) {
+      out.odometer_km = clampInt(Math.trunc(n), 1, 2_000_000);
+    }
+  }
 
   return out;
 }
@@ -382,7 +393,6 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
       try {
         const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
         if (!userId) return reply.code(404).send({ error: "User not found" });
-
         const patch = sanitizeCarPatch(req.body);
         const keys = Object.keys(patch);
         if (keys.length === 0)
