@@ -977,113 +977,123 @@ const hostCarsRoutes: FastifyPluginAsync = async (app) => {
    * POST /api/host/cars/:id/publish
    * ✅ Change: uses NULLIF(column,'') so publish will overwrite "empty-string columns"
    */
-  app.post(
-    "/host/cars/:id/publish",
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const auth = getAuth(req);
-      if (!auth) return reply.code(401).send({ error: "Unauthorized" });
+app.post(
+  "/host/cars/:id/publish",
+  { preHandler: app.authenticate },
+  async (req, reply) => {
+    const auth = getAuth(req);
+    if (!auth) return reply.code(401).send({ error: "Unauthorized" });
 
-      const carId = String((req.params as any)?.id || "").trim();
-      if (!carId) return reply.code(400).send({ error: "Missing car id" });
+    const carId = String((req.params as any)?.id || "").trim();
+    if (!carId) return reply.code(400).send({ error: "Missing car id" });
 
-      try {
-        const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
-        if (!userId) return reply.code(404).send({ error: "User not found" });
+    try {
+      const userId = await getDbUserIdByFirebaseUid(app, auth.uid);
+      if (!userId) return reply.code(404).send({ error: "User not found" });
 
-        const host = await getHostByUserId(app, userId);
-        if (!host) {
-          return reply.code(404).send({
-            error: "HOST_NOT_FOUND",
-            message: "Host profile not found.",
-          });
-        }
-
-        const existingRes = await app.db.query(
-          `SELECT * FROM cars WHERE id = $1 AND host_user_id = $2 AND deleted_at IS NULL LIMIT 1`,
-          [carId, userId]
-        );
-
-        const existing = existingRes.rows?.[0];
-        if (!existing) return reply.code(404).send({ error: "CAR_NOT_FOUND" });
-
-        const body = (req.body ?? {}) as any;
-
-        // Merge features: keep existing.features unless provided
-        const nextFeatures =
-          body.features && typeof body.features === "object"
-            ? body.features
-            : existing.features ?? {};
-
-        const denorm = denormCarColumnsFromBody({
-          ...body,
-          features: nextFeatures,
+      const host = await getHostByUserId(app, userId);
+      if (!host) {
+        return reply.code(404).send({
+          error: "HOST_NOT_FOUND",
+          message: "Host profile not found.",
         });
+      }
 
-        const sql = `
-          UPDATE cars
-          SET
-            status = 'active',
-            updated_at = NOW(),
+      const existingRes = await app.db.query(
+        `SELECT * FROM cars
+         WHERE id = $1 AND host_user_id = $2 AND deleted_at IS NULL
+         LIMIT 1`,
+        [carId, userId]
+      );
 
-            features = $1::jsonb,
+      const existing = existingRes.rows?.[0];
+      if (!existing) {
+        return reply.code(404).send({ error: "CAR_NOT_FOUND" });
+      }
 
-            -- treat "" as NULL on the column side so COALESCE can apply your denorm values
-            make  = COALESCE($2, NULLIF(make, '')),
-            model = COALESCE($3, NULLIF(model,'')),
-            trim  = COALESCE($4, NULLIF(trim, '')),
-            year  = COALESCE($5, year),
+      const body = (req.body ?? {}) as any;
 
-            body_type = CASE
-            WHEN $6 IS NULL OR $6 = '' THEN body_type
+      // Merge features: keep existing.features unless explicitly provided
+      const nextFeatures =
+        body.features && typeof body.features === "object"
+          ? body.features
+          : existing.features ?? {};
+
+      const denorm = denormCarColumnsFromBody({
+        ...body,
+        features: nextFeatures,
+      });
+
+      const sql = `
+        UPDATE cars
+        SET
+          status = 'active',
+          updated_at = NOW(),
+
+          features = $1::jsonb,
+
+          -- overwrite empty-string columns safely
+          make  = COALESCE($2, NULLIF(make, '')),
+          model = COALESCE($3, NULLIF(model, '')),
+          trim  = COALESCE($4, NULLIF(trim, '')),
+          year  = COALESCE($5, year),
+
+          body_type = CASE
+            WHEN $6::text IS NULL OR $6::text = '' THEN body_type
             ELSE $6::car_body_type
           END,
-          
+
           fuel_type = CASE
-            WHEN $7 IS NULL OR $7 = '' THEN fuel_type
+            WHEN $7::text IS NULL OR $7::text = '' THEN fuel_type
             ELSE $7::car_fuel_type
           END,
 
-            pickup_city        = COALESCE($8,  NULLIF(pickup_city,'')),
-            pickup_state       = COALESCE($9,  NULLIF(pickup_state,'')),
-            pickup_country     = COALESCE($10, NULLIF(pickup_country,'')),
-            pickup_postal_code = COALESCE($11, NULLIF(pickup_postal_code,''))
+          pickup_city        = COALESCE($8,  NULLIF(pickup_city, '')),
+          pickup_state       = COALESCE($9,  NULLIF(pickup_state, '')),
+          pickup_country     = COALESCE($10, NULLIF(pickup_country, '')),
+          pickup_postal_code = COALESCE($11, NULLIF(pickup_postal_code, ''))
 
-          WHERE id = $12 AND host_user_id = $13 AND deleted_at IS NULL
-          RETURNING *;
-        `;
+        WHERE id = $12
+          AND host_user_id = $13
+          AND deleted_at IS NULL
+        RETURNING *;
+      `;
 
-        const params = [
-          JSON.stringify(nextFeatures),
+      const params = [
+        JSON.stringify(nextFeatures),
 
-          denorm.make,
-          denorm.model,
-          denorm.trim,
-          denorm.year,
+        denorm.make,
+        denorm.model,
+        denorm.trim,
+        denorm.year,
 
-          denorm.body_type,
-          denorm.fuel_type,
+        denorm.body_type,
+        denorm.fuel_type,
 
-          denorm.pickup_city,
-          denorm.pickup_state,
-          denorm.pickup_country,
-          denorm.pickup_postal_code,
+        denorm.pickup_city,
+        denorm.pickup_state,
+        denorm.pickup_country,
+        denorm.pickup_postal_code,
 
-          carId,
-          userId,
-        ];
+        carId,
+        userId,
+      ];
 
-        const upd = await app.db.query(sql, params);
-        return reply.send({ car: normalizeCarRow(upd.rows[0]) });
-      } catch (e: any) {
-        req.log.error({ err: e }, "POST /host/cars/:id/publish failed");
-        return reply.code(500).send({
-          error: "INTERNAL_ERROR",
-          message: "Failed to publish car.",
-        });
-      }
+      const upd = await app.db.query(sql, params);
+
+      return reply.send({
+        car: normalizeCarRow(upd.rows[0]),
+      });
+    } catch (e: any) {
+      req.log.error({ err: e }, "POST /host/cars/:id/publish failed");
+      return reply.code(500).send({
+        error: "INTERNAL_ERROR",
+        message: "Failed to publish car.",
+      });
     }
-  );
+  }
+);
+
 
   /**
    * POST /api/host/cars/:id/unpublish

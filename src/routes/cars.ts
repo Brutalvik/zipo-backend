@@ -224,6 +224,9 @@ function buildWhere(q: CarsListQuery) {
   let i = 1;
 
   where.push(`deleted_at IS NULL`);
+  if (!normalizeStr(q.status)) {
+  where.push(`status = 'active'`);
+  }
 
   const country = normalizeStr(q.country);
   const city = normalizeStr(q.city);
@@ -884,7 +887,10 @@ const carsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/cars/filters", async (req, reply) => {
     const q = (req.query ?? {}) as Partial<{ country: string }>;
     const params: unknown[] = [];
-    const where: string[] = [`deleted_at IS NULL`];
+    const where: string[] = [
+  `deleted_at IS NULL`,
+  `status = 'active'`,
+];
 
     if (normalizeStr(q.country)) {
       params.push(String(q.country));
@@ -1016,7 +1022,7 @@ const carsRoutes: FastifyPluginAsync = async (app) => {
     const limit = clamp(Number(q.limit ?? 8) || 8, 1, 20);
 
     const params: unknown[] = [];
-    const where: string[] = [`deleted_at IS NULL`];
+    const where: string[] = [`deleted_at IS NULL`, `status = 'active'`];
     let i = 1;
 
     where.push(
@@ -1072,6 +1078,7 @@ const carsRoutes: FastifyPluginAsync = async (app) => {
         SELECT ${selectBaseFields()}
         FROM cars
         WHERE deleted_at IS NULL
+        AND status = 'active'
         ORDER BY is_featured DESC, is_popular DESC, COALESCE(rating_avg, rating) DESC NULLS LAST, created_at DESC
         LIMIT ${limit};
       `;
@@ -1090,6 +1097,7 @@ const carsRoutes: FastifyPluginAsync = async (app) => {
         SELECT ${selectBaseFields()}
         FROM cars
         WHERE deleted_at IS NULL
+        AND status = 'active'
         ORDER BY is_popular DESC, COALESCE(rating_avg, rating) DESC NULLS LAST, created_at DESC
         LIMIT ${limit};
       `;
@@ -1147,7 +1155,7 @@ const carsRoutes: FastifyPluginAsync = async (app) => {
       const sql = `
         SELECT ${selectBaseFields()}
         FROM cars
-        WHERE id = $1 AND deleted_at IS NULL
+        WHERE id = $1 AND deleted_at IS NULL AND status = 'active'
         LIMIT 1;
       `;
       const res = await app.db.query(sql, [id]);
